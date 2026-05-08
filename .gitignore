@@ -1,0 +1,42 @@
+# PHP
+*.log
+*.cache
+*.swp
+*.bak
+
+# Dolibarr
+/htdocs/
+/documents/
+/conf.php
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.env
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.sublime-*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# HA Addon
+/data/
+*.db
+*.db-wal
+*.db-shm
+
+# Build
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+package-lock.json
