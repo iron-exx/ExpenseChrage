@@ -37,15 +37,37 @@ class modWallboxbilling extends DolibarrModules
         );
 
         $this->version = '1.0.0';
-        $this->const_name = 'MAIN_MODULE_'.strtoupper($this->name['en_US']);
+        // const_name muss ein gültiger SQL/PHP-Konstanten-Name sein —
+        // strtoupper(name) enthält Leerzeichen, daher fix auf den Modul-Slug.
+        $this->const_name = 'MAIN_MODULE_WALLBOXBILLING';
         $this->special = 0;
-        $this->picto = 'wallbox@wallboxbilling'; // Icon aus img/ Verzeichnis
+        $this->picto = 'fa-charging-station'; // FontAwesome-Picto (immer verfügbar)
+        $this->editor_name = 'Wallbox-Dolibarr';
+        $this->editor_url = '';
+
+        $this->phpmin = array(7, 4);
+        $this->need_dolibarr_version = array(19, 0);
+        $this->module_parts = array(
+            'triggers' => 0,
+            'login' => 0,
+            'substitutions' => 0,
+            'menus' => 0,
+            'tpl' => 0,
+            'barcode' => 0,
+            'models' => 0,
+            'theme' => 0,
+            'css' => array(),
+            'js' => array(),
+            'hooks' => array(),
+            'moduleforexternal' => 0,
+        );
+        $this->config_page_url = array('admin.php@wallboxbilling');
 
         // Abhängigkeiten
         $this->depends = array(); // Keine besonderen Abhängigkeiten
         $this->requiredby = array();
         $this->conflictwith = array();
-        $this->langfiles = array("wallboxbilling.lang");
+        $this->langfiles = array("wallboxbilling@wallboxbilling");
 
         // API-Endpunkt Registrierung (API-01, API-02)
         // Der API-Endpoint wird über Dolibarr REST API exponiert:
@@ -88,7 +110,7 @@ class modWallboxbilling extends DolibarrModules
                 'label' => 'Wallbox Monthly Billing',
                 'jobtype' => 'method',
                 'class' => 'wallboxbilling/class/billing.class.php',
-                'objectname' => 'WallboxBilling',
+                'objectname' => 'WallboxBillingCron',
                 'method' => 'runMonthlyBilling',
                 'parameters' => '',
                 'comment' => 'Monatliche Wallbox-Abrechnung ausführen',
@@ -98,6 +120,67 @@ class modWallboxbilling extends DolibarrModules
                 'status' => 1,  // Aktiviert
                 'test' => '$conf->wallboxbilling->enabled'
             )
+        );
+
+        // Menüs (Hauptmenü + Untermenüs)
+        $this->menu = array();
+        $m = 0;
+        $this->menu[$m++] = array(
+            'fk_menu' => 0,
+            'type' => 'top',
+            'titre' => 'WallboxBilling',
+            'prefix' => img_picto('', $this->picto, 'class="pictofixedwidth valignmiddle"'),
+            'mainmenu' => 'wallboxbilling',
+            'leftmenu' => '',
+            'url' => '/custom/wallboxbilling/index.php',
+            'langs' => 'wallboxbilling@wallboxbilling',
+            'position' => 1000 + $m,
+            'enabled' => '$conf->wallboxbilling->enabled',
+            'perms' => '1',
+            'target' => '',
+            'user' => 2,
+        );
+        $this->menu[$m++] = array(
+            'fk_menu' => 'fk_mainmenu=wallboxbilling',
+            'type' => 'left',
+            'titre' => 'WallboxSessions',
+            'mainmenu' => 'wallboxbilling',
+            'leftmenu' => 'wallboxbilling_sessions',
+            'url' => '/custom/wallboxbilling/index.php',
+            'langs' => 'wallboxbilling@wallboxbilling',
+            'position' => 1000 + $m,
+            'enabled' => '$conf->wallboxbilling->enabled',
+            'perms' => '$user->hasRight("wallboxbilling","user")',
+            'target' => '',
+            'user' => 2,
+        );
+        $this->menu[$m++] = array(
+            'fk_menu' => 'fk_mainmenu=wallboxbilling',
+            'type' => 'left',
+            'titre' => 'MonthlyBilling',
+            'mainmenu' => 'wallboxbilling',
+            'leftmenu' => 'wallboxbilling_bill',
+            'url' => '/custom/wallboxbilling/bill.php',
+            'langs' => 'wallboxbilling@wallboxbilling',
+            'position' => 1000 + $m,
+            'enabled' => '$conf->wallboxbilling->enabled',
+            'perms' => '$user->hasRight("wallboxbilling","billing")',
+            'target' => '',
+            'user' => 2,
+        );
+        $this->menu[$m++] = array(
+            'fk_menu' => 'fk_mainmenu=wallboxbilling',
+            'type' => 'left',
+            'titre' => 'WallboxBillingSetup',
+            'mainmenu' => 'wallboxbilling',
+            'leftmenu' => 'wallboxbilling_setup',
+            'url' => '/custom/wallboxbilling/admin.php',
+            'langs' => 'wallboxbilling@wallboxbilling',
+            'position' => 1000 + $m,
+            'enabled' => '$conf->wallboxbilling->enabled',
+            'perms' => '$user->admin',
+            'target' => '',
+            'user' => 2,
         );
 
         // Export-Module registrieren (EXT-02, EXT-03)
@@ -111,16 +194,22 @@ class modWallboxbilling extends DolibarrModules
             )
         );
 
-        // Modul-Initialisierung
-        $this->init();
+        // WICHTIG: init() darf NICHT im Konstruktor aufgerufen werden — die
+        // Methode wird von Dolibarr's Modul-Aktivierung explizit getriggert.
     }
 
     /**
-     * Modul-Initialisierung (D-07, DB-03)
+     * Modul-Aktivierung (Dolibarr ruft das beim Aktivieren auf).
+     *
+     * Legt die Datenbank-Tabellen + Indizes an, registriert Cronjobs,
+     * Berechtigungen, Menüs und Konstanten via _init().
+     *
+     * @param string $options Optionen (z.B. 'noboxes')
+     * @return int 1 = OK, 0 = KO
      */
-    public function init()
+    public function init($options = '')
     {
-        // SQL-Tabellen erstellen
+        // SQL-Statements für Tabellen + Indizes (D-07, DB-03)
         $sql = array();
 
         // Haupt-Sessions Tabelle
@@ -169,23 +258,37 @@ class modWallboxbilling extends DolibarrModules
             UNIQUE KEY `uk_user_month_year` (`fk_user`, `billing_month`, `billing_year`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
 
-        // Indizes erstellen
-        $sql[] = "CREATE INDEX IF NOT EXISTS idx_wallbox_sessions_rfid ON llx_wallbox_sessions(rfid_hash)";
-        $sql[] = "CREATE INDEX IF NOT EXISTS idx_wallbox_sessions_user ON llx_wallbox_sessions(fk_user)";
-        $sql[] = "CREATE INDEX IF NOT EXISTS idx_wallbox_sessions_status ON llx_wallbox_sessions(status)";
-        $sql[] = "CREATE INDEX IF NOT EXISTS idx_wallbox_sessions_transmitted ON llx_wallbox_sessions(transmitted_at)";
+        // Indizes erstellen — _init() ignoriert "duplicate key" Fehler beim
+        // erneuten Aktivieren, daher reicht plain CREATE INDEX.
+        $sql[] = "CREATE INDEX idx_wallbox_sessions_rfid ON llx_wallbox_sessions(rfid_hash)";
+        $sql[] = "CREATE INDEX idx_wallbox_sessions_user ON llx_wallbox_sessions(fk_user)";
+        $sql[] = "CREATE INDEX idx_wallbox_sessions_status ON llx_wallbox_sessions(status)";
+        $sql[] = "CREATE INDEX idx_wallbox_sessions_transmitted ON llx_wallbox_sessions(transmitted_at)";
 
-        foreach ($sql as $query) {
-            $this->db->query($query);
-        }
-
-        return $this->__construct($this->db);
+        // Dolibarr-Standard: _init kümmert sich um Permissions, Konstanten,
+        // Cronjobs und legt die Tabellen via $sql[] an.
+        return $this->_init($sql, $options);
     }
 
     /**
-     * Modul-Installation
+     * Modul-Deaktivierung (Dolibarr Standard).
+     *
+     * @param string $options Optionen
+     * @return int 1 = OK
      */
-    public function install()
+    public function remove($options = '')
+    {
+        $sql = array();
+        return $this->_remove($sql, $options);
+    }
+
+    /**
+     * Legacy-Install-Routine (von älteren Versionen aufrufbar).
+     * Wird beim normalen Dolibarr-Workflow nicht mehr verwendet — init()/remove()
+     * sind jetzt die offiziellen Einstiegspunkte. Kann manuell aufgerufen
+     * werden, um die transmitted_at-Spalte auf alten Installationen nachzurüsten.
+     */
+    public function install_legacy()
     {
         global $db, $conf;
 
@@ -240,11 +343,11 @@ class modWallboxbilling extends DolibarrModules
             UNIQUE KEY `uk_user_month_year` (`fk_user`, `billing_month`, `billing_year`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
 
-        // Indizes
-        $sql[] = "CREATE INDEX IF NOT EXISTS idx_wallbox_sessions_rfid ON llx_wallbox_sessions(rfid_hash)";
-        $sql[] = "CREATE INDEX IF NOT EXISTS idx_wallbox_sessions_user ON llx_wallbox_sessions(fk_user)";
-        $sql[] = "CREATE INDEX IF NOT EXISTS idx_wallbox_sessions_status ON llx_wallbox_sessions(status)";
-        $sql[] = "CREATE INDEX IF NOT EXISTS idx_wallbox_sessions_transmitted ON llx_wallbox_sessions(transmitted_at)";
+        // Indizes (Fehler bei bereits existierendem Index sind harmlos)
+        $sql[] = "CREATE INDEX idx_wallbox_sessions_rfid ON llx_wallbox_sessions(rfid_hash)";
+        $sql[] = "CREATE INDEX idx_wallbox_sessions_user ON llx_wallbox_sessions(fk_user)";
+        $sql[] = "CREATE INDEX idx_wallbox_sessions_status ON llx_wallbox_sessions(status)";
+        $sql[] = "CREATE INDEX idx_wallbox_sessions_transmitted ON llx_wallbox_sessions(transmitted_at)";
 
         foreach ($sql as $query) {
             $result = $db->query($query);
@@ -300,7 +403,7 @@ class modWallboxbilling extends DolibarrModules
         $res = $db->query($check_col);
         if (!$res || $db->num_rows($res) == 0) {
             $db->query("ALTER TABLE llx_wallbox_sessions ADD COLUMN transmitted_at DATETIME NULL");
-            $db->query("CREATE INDEX IF NOT EXISTS idx_wallbox_sessions_transmitted ON llx_wallbox_sessions(transmitted_at)");
+            $db->query("CREATE INDEX idx_wallbox_sessions_transmitted ON llx_wallbox_sessions(transmitted_at)");
         }
 
         return 1;

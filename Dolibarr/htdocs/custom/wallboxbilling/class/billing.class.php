@@ -11,9 +11,13 @@
 require_once DOL_DOCUMENT_ROOT.'/core/class/commonobject.class.php';
 
 /**
- * WallboxBilling Klasse für monatliche Abrechnung
+ * WallboxBillingCron Klasse für monatliche Abrechnung (Cron-Job).
+ *
+ * Hinweis: Eigene Klassen-Name (nicht "WallboxBilling"), weil die DAO in
+ * class/wallboxbilling.class.php bereits den Namen WallboxBilling belegt —
+ * doppelte Deklaration würde einen PHP-Fatal-Error auslösen.
  */
-class WallboxBilling extends CommonObject
+class WallboxBillingCron extends CommonObject
 {
     /**
      * Datenbank-Objekt
@@ -72,8 +76,8 @@ class WallboxBilling extends CommonObject
         $sql = "SELECT s.fk_user, s.rfid_hash, u.login, u.lastname, u.firstname, u.email,";
         $sql .= " SUM(s.kwh) as total_kwh, s.price_per_kwh,";
         $sql .= " SUM(s.total_cost) as total_cost, COUNT(*) as session_count";
-        $sql .= " FROM ".MAIN_PREFIX."wallbox_sessions s";
-        $sql .= " LEFT JOIN ".MAIN_PREFIX."user u ON s.fk_user = u.rowid";
+        $sql .= " FROM ".MAIN_DB_PREFIX."wallbox_sessions s";
+        $sql .= " LEFT JOIN ".MAIN_DB_PREFIX."user u ON s.fk_user = u.rowid";
         $sql .= " WHERE s.start_time >= '".$this->db->escape($startDate)."'";
         $sql .= " AND s.end_time <= '".$this->db->escape($endDate)."'";
         $sql .= " AND s.status = 'completed'";
@@ -155,7 +159,7 @@ class WallboxBilling extends CommonObject
     private function getSessionDetails($fkUser, $start, $end)
     {
         $sql = "SELECT rowid, start_time, end_time, kwh, price_per_kwh, total_cost, wallbox_id";
-        $sql .= " FROM ".MAIN_PREFIX."wallbox_sessions";
+        $sql .= " FROM ".MAIN_DB_PREFIX."wallbox_sessions";
         $sql .= " WHERE fk_user = " . intval($fkUser);
         $sql .= " AND start_time >= '".$this->db->escape($start)."'";
         $sql .= " AND end_time <= '".$this->db->escape($end)."'";
@@ -210,7 +214,7 @@ class WallboxBilling extends CommonObject
         $fkUserCreator
     ) {
         // Prüfen ob bereits vorhanden (verhindert Doppelabrechnung)
-        $checkSql = "SELECT rowid FROM ".MAIN_PREFIX."wallbox_billing_history";
+        $checkSql = "SELECT rowid FROM ".MAIN_DB_PREFIX."wallbox_billing_history";
         $checkSql .= " WHERE fk_user = ".intval($fkUser);
         $checkSql .= " AND billing_month = ".intval($billingMonth);
         $checkSql .= " AND billing_year = ".intval($billingYear);
@@ -226,7 +230,7 @@ class WallboxBilling extends CommonObject
         $sessionDetailsJson = json_encode($sessionDetails);
 
         // SQL Insert
-        $sql = "INSERT INTO ".MAIN_PREFIX."wallbox_billing_history (";
+        $sql = "INSERT INTO ".MAIN_DB_PREFIX."wallbox_billing_history (";
         $sql .= "fk_user, billing_month, billing_year, total_kwh, price_per_kwh,";
         $sql .= "total_cost, session_count, session_details, fk_user_creator, date_creation, status";
         $sql .= ") VALUES (";
@@ -250,7 +254,7 @@ class WallboxBilling extends CommonObject
             return -1;
         }
 
-        $billingId = $this->db->last_insert_id(MAIN_PREFIX."wallbox_billing_history");
+        $billingId = $this->db->last_insert_id(MAIN_DB_PREFIX."wallbox_billing_history");
         return $billingId;
     }
 
@@ -325,7 +329,7 @@ class WallboxBilling extends CommonObject
      */
     public function getUserBillingHistory($fkUser)
     {
-        $sql = "SELECT * FROM ".MAIN_PREFIX."wallbox_billing_history";
+        $sql = "SELECT * FROM ".MAIN_DB_PREFIX."wallbox_billing_history";
         $sql .= " WHERE fk_user = ".intval($fkUser);
         $sql .= " ORDER BY billing_year DESC, billing_month DESC";
 
@@ -351,8 +355,8 @@ class WallboxBilling extends CommonObject
     public function getOpenBillings()
     {
         $sql = "SELECT b.*, u.login, u.lastname, u.firstname, u.email";
-        $sql .= " FROM ".MAIN_PREFIX."wallbox_billing_history b";
-        $sql .= " LEFT JOIN ".MAIN_PREFIX."user u ON b.fk_user = u.rowid";
+        $sql .= " FROM ".MAIN_DB_PREFIX."wallbox_billing_history b";
+        $sql .= " LEFT JOIN ".MAIN_DB_PREFIX."user u ON b.fk_user = u.rowid";
         $sql .= " WHERE b.status = 1"; // Status: erstellt (offen)
         $sql .= " ORDER BY b.billing_year DESC, b.billing_month DESC, u.login";
 

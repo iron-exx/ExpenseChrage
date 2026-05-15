@@ -17,10 +17,10 @@ CREATE TABLE IF NOT EXISTS `llx_wallboxbilling_sessions` (
 );
 
 -- Indizes für performante Abfragen (DB-02 Vorbereitung)
-CREATE INDEX IF NOT EXISTS `idx_wallbox_sessions_rfid` ON `llx_wallboxbilling_sessions` (`rfid_hash`);
-CREATE INDEX IF NOT EXISTS `idx_wallbox_sessions_user` ON `llx_wallboxbilling_sessions` (`user_id`);
-CREATE INDEX IF NOT EXISTS `idx_wallbox_sessions_start` ON `llx_wallboxbilling_sessions` (`start_time`);
-CREATE INDEX IF NOT EXISTS `idx_wallbox_sessions_status` ON `llx_wallboxbilling_sessions` (`status`);
+CREATE INDEX `idx_wallbox_sessions_rfid` ON `llx_wallboxbilling_sessions` (`rfid_hash`);
+CREATE INDEX `idx_wallbox_sessions_user` ON `llx_wallboxbilling_sessions` (`user_id`);
+CREATE INDEX `idx_wallbox_sessions_start` ON `llx_wallboxbilling_sessions` (`start_time`);
+CREATE INDEX `idx_wallbox_sessions_status` ON `llx_wallboxbilling_sessions` (`status`);
 
 -- Kommentare
 ALTER TABLE `llx_wallboxbilling_sessions` COMMENT 'Wallbox Ladevorgänge (Sessions) für Abrechnung';

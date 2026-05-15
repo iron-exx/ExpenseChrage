@@ -116,10 +116,10 @@ class WallboxBilling
         
         $now = $this->db->idate(dol_now());
         
+        // Schema hat kein eigenes total_kwh — kwh trägt die verbrauchte Energie.
         $sql = "UPDATE ".MAIN_DB_PREFIX."wallbox_sessions SET ";
         $sql.= "end_time = '".$now."', ";
-        $sql.= "kwh = ".(float) $end_energy_kwh.", ";
-        $sql.= "total_kwh = ".(float) $total_kwh.", ";
+        $sql.= "kwh = ".(float) $total_kwh.", ";
         $sql.= "total_cost = ".(float) $total_cost.", ";
         $sql.= "status = 'completed'";
         $sql.= " WHERE rowid = ".$session_id;

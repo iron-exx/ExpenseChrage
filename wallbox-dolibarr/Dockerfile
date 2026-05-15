@@ -16,8 +16,10 @@ COPY requirements.txt /tmp/requirements.txt
 RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
 
 # Addon Dateien kopieren
-COPY main.py /usr/local/bin/main.py
-COPY utils/ /usr/local/bin/utils/
+COPY main.py            /usr/local/bin/main.py
+COPY api_client.py      /usr/local/bin/api_client.py
+COPY session_manager.py /usr/local/bin/session_manager.py
+COPY utils/             /usr/local/bin/utils/
 RUN chmod a+x /usr/local/bin/main.py
 
 # Standard HA Addon Port (optional, für zukünftige API)
