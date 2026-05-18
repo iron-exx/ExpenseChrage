@@ -40,6 +40,23 @@ if (!$user->admin) {
 
 $langs->loadLangs(array('admin', 'wallboxbilling@wallboxbilling'));
 
+// --- Auto-Migration: fehlende Spalten nachrüsten ohne Konsolen-Zugriff ---
+$resql_cols = $db->query("SHOW COLUMNS FROM ".MAIN_DB_PREFIX."wallbox_rfid");
+if ($resql_cols) {
+    $existing = array();
+    while ($col = $db->fetch_object($resql_cols)) {
+        $existing[] = strtolower($col->Field);
+    }
+    $db->free($resql_cols);
+    if (!in_array('price_kwh', $existing)) {
+        $db->query("ALTER TABLE ".MAIN_DB_PREFIX."wallbox_rfid ADD COLUMN price_kwh DECIMAL(10,4) DEFAULT NULL AFTER label");
+    }
+    if (!in_array('entity', $existing)) {
+        $db->query("ALTER TABLE ".MAIN_DB_PREFIX."wallbox_rfid ADD COLUMN entity INTEGER DEFAULT 1 AFTER active");
+        $db->query("UPDATE ".MAIN_DB_PREFIX."wallbox_rfid SET entity = 1 WHERE entity IS NULL");
+    }
+}
+
 $action = GETPOST('action', 'aZ09');
 
 // --- Aktionen verarbeiten ---
