@@ -54,6 +54,7 @@ class modWallboxbilling extends DolibarrModules
             'js' => array(),
             'hooks' => array(),
             'moduleforexternal' => 0,
+            'apis' => 1,
         );
         $this->config_page_url = array('setup.php@wallboxbilling');
 
