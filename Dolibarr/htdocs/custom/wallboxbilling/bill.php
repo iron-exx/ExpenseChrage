@@ -46,11 +46,10 @@ $head = wallboxbillingPrepareHead();
 print dol_get_fiche_head($head, 'billing', $page_title, -1, 'fa-bolt');
 
 // Abrechnungen aus DB lesen
-$sql = "SELECT b.rowid, b.billing_month, b.billing_year, b.total_kwh, b.total_amount,"
+$sql = "SELECT b.rowid, b.billing_month, b.billing_year, b.total_kwh, b.total_cost,"
     ." b.status, u.login, u.firstname, u.lastname"
-    ." FROM ".MAIN_DB_PREFIX."wallbox_billing b"
+    ." FROM ".MAIN_DB_PREFIX."wallbox_billing_history b"
     ." LEFT JOIN ".MAIN_DB_PREFIX."user u ON u.rowid = b.fk_user"
-    ." WHERE b.entity = ".(int)$conf->entity
     ." ORDER BY b.billing_year DESC, b.billing_month DESC, u.login ASC";
 
 $resql = $db->query($sql);
@@ -69,7 +68,7 @@ if ($resql && $db->num_rows($resql) > 0) {
         $login  = dol_escape_htmltag($obj->login.' '.$obj->firstname.' '.$obj->lastname);
         $period = str_pad((int)$obj->billing_month, 2, '0', STR_PAD_LEFT).'/'.((int)$obj->billing_year);
         $kwh    = $obj->total_kwh !== null ? price((float)$obj->total_kwh) : '—';
-        $amount = $obj->total_amount !== null ? price((float)$obj->total_amount).' €' : '—';
+        $amount = $obj->total_cost !== null ? price((float)$obj->total_cost).' €' : '—';
         $status = $obj->status == 1 ? '<span class="badge badge-status4 badge-status">Abgerechnet</span>'
                                     : '<span class="badge badge-status1 badge-status">Offen</span>';
         print '<tr class="oddeven">';
