@@ -60,18 +60,22 @@ $sql .= " ORDER BY s.start_time DESC";
 
 $resql = $db->query($sql);
 
+if (!$resql) {
+    dol_syslog('WallboxBilling index.php SQL error: '.$db->lasterror(), LOG_ERR);
+}
+
 print '<table class="noborder centpercent">';
 print '<tr class="liste_titre">';
 print '<td>'.$langs->trans('User').'</td>';
 print '<td>'.$langs->trans('Date').'</td>';
-print '<td>'.$langs->trans('Duration').'</td>';
+print '<td>'.$langs->trans('End').'</td>';
 print '<td class="right">kWh</td>';
 print '<td>'.$langs->trans('WallboxId').'</td>';
 print '</tr>';
 
 if ($resql && $db->num_rows($resql) > 0) {
     while ($obj = $db->fetch_object($resql)) {
-        $login = !empty($obj->login) ? dol_escape_htmltag($obj->login) : '<em class="opacitymedium">'.substr($obj->rfid_hash, 0, 8).'…</em>';
+        $login = !empty($obj->login) ? dol_escape_htmltag($obj->login) : '<em class="opacitymedium">'.dol_escape_htmltag(substr($obj->rfid_hash, 0, 8)).'…</em>';
         $start = $obj->start_time ? dol_print_date($db->jdate($obj->start_time), 'dayhour') : '—';
         $end   = $obj->end_time   ? dol_print_date($db->jdate($obj->end_time),   'dayhour') : '—';
         $kwh   = $obj->kwh !== null ? price((float)$obj->kwh).' kWh' : '—';
@@ -84,6 +88,8 @@ if ($resql && $db->num_rows($resql) > 0) {
         print '</tr>';
     }
     $db->free($resql);
+} elseif (!$resql) {
+    print '<tr><td colspan="5" class="error">SQL-Fehler: '.dol_escape_htmltag($db->lasterror()).'</td></tr>';
 } else {
     print '<tr><td colspan="5" class="opacitymedium center">'.$langs->trans('SessionsWillBeDisplayedHere').'</td></tr>';
 }

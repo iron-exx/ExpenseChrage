@@ -11,9 +11,11 @@
  *   3. Duplikatschutz: jede Session bekommt [sid:X]-Marker im Kommentar
  */
 
-// Pfade via __DIR__ ableiten — unabhängig von DOL_DOCUMENT_ROOT Konfiguration
-// billing.class.php liegt in htdocs/custom/wallboxbilling/class/ → 3 Ebenen hoch = htdocs/
-$_wbHtdocs = dirname(dirname(dirname(__DIR__)));
+// Robuste htdocs-Erkennung: Modul kann in htdocs/custom/ ODER neben htdocs/ liegen
+$_wbHtdocs = dirname(dirname(dirname(__DIR__))); // 3 Ebenen hoch (Standard-Install)
+if (!file_exists($_wbHtdocs.'/core/class/commonobject.class.php')) {
+    $_wbHtdocs .= '/htdocs'; // Fallback: Modul liegt als Geschwister neben htdocs/
+}
 require_once $_wbHtdocs.'/core/class/commonobject.class.php';
 if (!class_exists('ExpenseReport')) {
     require_once $_wbHtdocs.'/expensereport/class/expensereport.class.php';
@@ -315,8 +317,8 @@ class WallboxBillingCron extends CommonObject
 
         // Anlegen
         $sql = "INSERT INTO ".MAIN_DB_PREFIX."c_type_fees"
-             . " (code, label, active, entity)"
-             . " VALUES ('TK_ELE', 'Stromkosten (Wallbox)', 1, ".(int)$conf->entity.")";
+             . " (code, label, active)"
+             . " VALUES ('TK_ELE', 'Stromkosten (Wallbox)', 1)";
         if ($this->db->query($sql)) {
             return (int) $this->db->last_insert_id(MAIN_DB_PREFIX."c_type_fees");
         }
