@@ -1,28 +1,33 @@
 ARG BUILD_FROM=ghcr.io/home-assistant/base:3.23
 FROM ${BUILD_FROM}
 
+# Build-Args (wurden früher über build.json übergeben)
+ARG BUILD_VERSION=dev
+ARG BUILD_ARCH=amd64
+ARG BUILD_DATE
+ARG BUILD_REF
+
 LABEL \
-  io.hass.name="Wallbox-Dolibarr Addon" \
-  io.hass.description="Erfassung und Übertragung von Wallbox-Ladevorgängen" \
+  io.hass.name="Wallbox Dolibarr Invoice" \
+  io.hass.description="RFID-basierte Abrechnung von Wallbox-Ladevorgängen via Dolibarr" \
   io.hass.type="addon" \
-  io.hass.version="1.0.0" \
-  org.opencontainers.image.source="https://github.com/user/Wallbox-Dolibarr"
+  io.hass.version="${BUILD_VERSION}" \
+  io.hass.arch="${BUILD_ARCH}" \
+  org.opencontainers.image.source="https://github.com/iron-exx/evcharge-dolibarr-invoice"
 
-# Alpine Pakete installieren
-RUN apk add --no-cache python3 py3-pip py3-requests sqlite
+# Alle Abhängigkeiten über apk (kein pip nötig, PEP-668-kompatibel)
+RUN apk add --no-cache \
+    python3 \
+    py3-aiohttp \
+    py3-requests \
+    py3-yaml \
+    sqlite-libs
 
-# Python Abhängigkeiten
-COPY requirements.txt /tmp/requirements.txt
-RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
-
-# Addon Dateien kopieren
+# Addon-Dateien kopieren
 COPY main.py            /usr/local/bin/main.py
 COPY api_client.py      /usr/local/bin/api_client.py
 COPY session_manager.py /usr/local/bin/session_manager.py
 COPY utils/             /usr/local/bin/utils/
 RUN chmod a+x /usr/local/bin/main.py
-
-# Standard HA Addon Port (optional, für zukünftige API)
-EXPOSE 8099
 
 CMD ["python3", "/usr/local/bin/main.py"]
