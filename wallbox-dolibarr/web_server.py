@@ -107,9 +107,10 @@ def _base(nav_html, content):
 </html>"""
 
 def _nav(active):
+    # Relative URLs — absoluter Pfad würde HA-eigene Seiten öffnen
     return (
-        f'<a href="/" class="{"active" if active == "form" else ""}">⚡ Erfassen</a>'
-        f'<a href="/history" class="{"active" if active == "history" else ""}">📋 Verlauf</a>'
+        f'<a href="./" class="{"active" if active == "form" else ""}">⚡ Erfassen</a>'
+        f'<a href="history" class="{"active" if active == "history" else ""}">📋 Verlauf</a>'
     )
 
 # ---------------------------------------------------------------------------
@@ -195,7 +196,7 @@ def _build_form_page(session_manager, config, message_html=''):
 {message_html}
 <div class="card">
   <h3>Manueller Ladevorgang</h3>
-  <form method="POST" action="/">
+  <form method="POST" action="./">
     <label>RFID-Karte</label>
     <select name="rfid" required>{rfid_opts}</select>
     <label>Geladene Energie</label>
@@ -208,7 +209,7 @@ def _build_form_page(session_manager, config, message_html=''):
     <input type="date" name="date" value="{today}" required>
     <button type="submit" class="btn btn-primary">Ladevorgang speichern</button>
   </form>
-  <form method="POST" action="/transmit" onsubmit="this.querySelector('button').textContent='Übertrage…'">
+  <form method="POST" action="transmit" onsubmit="this.querySelector('button').textContent='Übertrage…'">
     <button type="submit" class="btn btn-transmit">📤 Jetzt an Dolibarr übertragen</button>
   </form>
 </div>
@@ -278,7 +279,7 @@ def _build_history_page(session_manager, year, month):
     else:
         table_html = '<div class="empty">Keine Sessions in diesem Monat</div>'
 
-    export_url = f'/export?year={year}&month={month}'
+    export_url = f'export?year={year}&month={month}'
     content = f"""
 <div class="card">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
@@ -314,6 +315,7 @@ def create_app(session_manager, config, api_state):
 
     # -- POST / --------------------------------------------------------------
     async def handle_post(request):
+        msg_html = ''
         try:
             data     = await request.post()
             rfid_hex = data.get('rfid', '').strip()
@@ -331,21 +333,22 @@ def create_app(session_manager, config, api_state):
             sid        = session_manager.add_manual_session(rfid_hash, kwh, wallbox_id, date_str)
 
             if sid:
-                import urllib.parse
-                msg = urllib.parse.quote(f'Session #{sid} gespeichert: {kwh:.3f} kWh am {date_str}')
-                return web.HTTPFound(f'/?msg={msg}&t=ok')
-            raise ValueError("Session konnte nicht gespeichert werden.")
+                msg_html = (f'<div class="msg ok">Session #{sid} gespeichert: '
+                            f'<strong>{kwh:.3f} kWh</strong> am {date_str}</div>')
+            else:
+                raise ValueError("Session konnte nicht gespeichert werden.")
         except Exception as exc:
-            import urllib.parse
-            msg = urllib.parse.quote(f'Fehler: {exc}')
-            return web.HTTPFound(f'/?msg={msg}&t=err')
+            msg_html = f'<div class="msg err">Fehler: {exc}</div>'
+
+        return web.Response(
+            text=_build_form_page(session_manager, config, msg_html),
+            content_type='text/html'
+        )
 
     # -- POST /transmit -------------------------------------------------------
     async def handle_transmit(request):
-        import urllib.parse
         client = api_state.get('client')
 
-        # Client on-demand erstellen falls nicht vorhanden
         if not client:
             from api_client import WallboxApiClient
             url   = config.get('dolibarr_url', '')
@@ -361,30 +364,28 @@ def create_app(session_manager, config, api_state):
                     _LOGGER.warning("API-Client Fehler: %s", e)
 
         if not client:
-            msg = urllib.parse.quote('Dolibarr API nicht erreichbar — bitte URL und Token prüfen.')
-            return web.HTTPFound(f'/?msg={msg}&t=err')
+            msg_html = '<div class="msg err">Dolibarr API nicht erreichbar — bitte URL und Token prüfen.</div>'
+        else:
+            try:
+                result = session_manager.transmit_completed_sessions(client)
+                sent   = result.get('transmitted', 0)
+                failed = result.get('failed', 0)
+                if sent == 0 and failed == 0:
+                    msg_html = '<div class="msg warn">Keine ausstehenden Sessions.</div>'
+                elif failed > 0:
+                    err = result['errors'][0] if result['errors'] else ''
+                    msg_html = f'<div class="msg err">{sent} übertragen, {failed} fehlgeschlagen: {err}</div>'
+                else:
+                    msg_html = f'<div class="msg ok">{sent} Session(s) erfolgreich an Dolibarr übertragen.</div>'
+            except Exception as exc:
+                msg_html = f'<div class="msg err">Übertragungsfehler: {exc}</div>'
 
-        try:
-            result = session_manager.transmit_completed_sessions(client)
-            sent   = result.get('transmitted', 0)
-            failed = result.get('failed', 0)
+        return web.Response(
+            text=_build_form_page(session_manager, config, msg_html),
+            content_type='text/html'
+        )
 
-            if sent == 0 and failed == 0:
-                msg = urllib.parse.quote('Keine ausstehenden Sessions.')
-                return web.HTTPFound(f'/?msg={msg}&t=warn')
-            elif failed > 0:
-                msg = urllib.parse.quote(
-                    f'{sent} übertragen, {failed} fehlgeschlagen: {result["errors"][0] if result["errors"] else ""}'
-                )
-                return web.HTTPFound(f'/?msg={msg}&t=err')
-            else:
-                msg = urllib.parse.quote(f'{sent} Session(s) erfolgreich übertragen.')
-                return web.HTTPFound(f'/?msg={msg}&t=ok')
-        except Exception as exc:
-            msg = urllib.parse.quote(f'Übertragungsfehler: {exc}')
-            return web.HTTPFound(f'/?msg={msg}&t=err')
-
-    # -- GET /history ---------------------------------------------------------
+    # -- GET /history (auch POST-Fallback für HA-Ingress-Redirects) -----------
     async def handle_history(request):
         year  = int(request.rel_url.query.get('year',  0))
         month = int(request.rel_url.query.get('month', 0))
