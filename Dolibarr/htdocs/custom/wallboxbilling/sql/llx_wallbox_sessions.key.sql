@@ -5,3 +5,4 @@ CREATE INDEX `idx_wallbox_sessions_rfid` ON `llx_wallbox_sessions` (`rfid_hash`)
 CREATE INDEX `idx_wallbox_sessions_user` ON `llx_wallbox_sessions` (`fk_user`);
 CREATE INDEX `idx_wallbox_sessions_start` ON `llx_wallbox_sessions` (`start_time`);
 CREATE INDEX `idx_wallbox_sessions_status` ON `llx_wallbox_sessions` (`status`);
+CREATE INDEX `idx_wallbox_sessions_transmitted` ON `llx_wallbox_sessions` (`transmitted_at`);

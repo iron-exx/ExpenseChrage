@@ -16,9 +16,3 @@ CREATE TABLE llx_wallbox_sessions (
     transmitted_at DATETIME NULL DEFAULT NULL,    -- API-05: Zeitpunkt der Übertragung von HA-Addon
     tms TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
-
--- Indizes für performante Abfragen
-CREATE INDEX idx_wallbox_sessions_rfid ON llx_wallbox_sessions(rfid_hash);
-CREATE INDEX idx_wallbox_sessions_user ON llx_wallbox_sessions(fk_user);
-CREATE INDEX idx_wallbox_sessions_status ON llx_wallbox_sessions(status);
-CREATE INDEX idx_wallbox_sessions_transmitted ON llx_wallbox_sessions(transmitted_at);
