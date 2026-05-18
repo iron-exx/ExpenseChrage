@@ -1,6 +1,7 @@
 # Wallbox Billing Sprachdatei (Deutsch)
 # Generiert: 2026-05-04
 
+WallboxbillingDescription=RFID-basierte Abrechnung von Wallbox-Ladevorgängen
 WallboxBillingSetup=Wallbox-Abrechnung Konfiguration
 WallboxConfiguration=Wallbox Konfiguration
 DefaultPricePerKwh=Standardpreis pro kWh (€)

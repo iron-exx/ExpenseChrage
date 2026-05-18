@@ -26,20 +26,14 @@ class modWallboxbilling extends DolibarrModules
         $this->family = "financial"; // Familie: Finanzen
         $this->module_position = 80; // Position im Menü
 
-        $this->name = array(
-            'en_US' => 'Wallbox Billing',
-            'de_DE' => 'Wallbox-Abrechnung'
-        );
-
-        $this->description = array(
-            'en_US' => 'RFID-based billing for EV charging sessions',
-            'de_DE' => 'RFID-basierte Abrechnung von Wallbox-Ladevorgängen'
-        );
+        // name muss ein einfacher String sein — kein Array (Dolibarr-Pflicht)
+        $this->name = preg_replace('/^mod/i', '', get_class($this)); // → 'Wallboxbilling'
+        $this->description = 'WallboxbillingDescription'; // wird über lang-Datei aufgelöst
 
         $this->version = '1.0.0';
         // const_name muss ein gültiger SQL/PHP-Konstanten-Name sein —
         // strtoupper(name) enthält Leerzeichen, daher fix auf den Modul-Slug.
-        $this->const_name = 'MAIN_MODULE_WALLBOXBILLING';
+        $this->const_name = 'MAIN_MODULE_'.strtoupper($this->name); // MAIN_MODULE_WALLBOXBILLING
         $this->special = 0;
         $this->picto = 'fa-charging-station'; // FontAwesome-Picto (immer verfügbar)
         $this->editor_name = 'Wallbox-Dolibarr';
@@ -79,28 +73,22 @@ class modWallboxbilling extends DolibarrModules
 
         $r = 0;
 
-        // wallboxbilling.user - Normale Nutzer (können eigene Sessions sehen)
-        $this->rights[$r][0] = 104001; // ID für Berechtigung
-        $this->rights[$r][1] = 'View own charging sessions'; // Beschreibung (en)
-        $this->rights[$r][2] = 'r'; // Leserecht
-        $this->rights[$r][3] = 0; // Nicht aktiv standardmäßig
-        $this->rights[$r][4] = 'wallboxbilling.user'; // Berechtigungs-Key
+        $this->rights[$r][0] = 104001;
+        $this->rights[$r][1] = 'View own charging sessions';
+        $this->rights[$r][4] = 'session';
+        $this->rights[$r][5] = 'read';
         $r++;
 
-        // wallboxbilling.admin - Admins (können alle Sessions verwalten)
         $this->rights[$r][0] = 104002;
         $this->rights[$r][1] = 'Manage all charging sessions and users';
-        $this->rights[$r][2] = 'w'; // Schreibrecht
-        $this->rights[$r][3] = 0;
-        $this->rights[$r][4] = 'wallboxbilling.admin';
+        $this->rights[$r][4] = 'session';
+        $this->rights[$r][5] = 'write';
         $r++;
 
-        // wallboxbilling.billing - Billing (können Abrechnungen erstellen)
         $this->rights[$r][0] = 104003;
         $this->rights[$r][1] = 'Create monthly billing and invoices';
-        $this->rights[$r][2] = 'w';
-        $this->rights[$r][3] = 0;
-        $this->rights[$r][4] = 'wallboxbilling.billing';
+        $this->rights[$r][4] = 'billing';
+        $this->rights[$r][5] = 'write';
         $r++;
 
         // Cron-Jobs registrieren (BIL-01)
