@@ -129,6 +129,21 @@ try {
             $billing_results = $result;
         }
     }
+
+    if ($action === 'insert_test_session' && !empty($submitted_token) && $token_ok) {
+        $now   = $db->idate(dol_now());
+        $start = $db->idate(dol_now() - 3600);
+        $sqlT  = "INSERT INTO ".MAIN_DB_PREFIX."wallbox_sessions"
+               . " (fk_user, rfid_hash, wallbox_id, start_time, end_time, kwh,"
+               . "  price_per_kwh, total_cost, status, date_creation, transmitted_at)"
+               . " VALUES (".(int)$user->id.", 'TEST_HASH_0000000000000000000000000000000000000000000000000000000000000000',"
+               . " 'test_wallbox', '".$start."', '".$now."', 5.0, 0.30, 1.50, 'completed', '".$now."', '".$now."')";
+        if ($db->query($sqlT)) {
+            setEventMessages('Test-Session eingefügt (ID: '.(int)$db->last_insert_id(MAIN_DB_PREFIX.'wallbox_sessions').'). Jetzt Ladevorgänge öffnen.', null, 'mesgs');
+        } else {
+            setEventMessages('Fehler: '.$db->lasterror(), null, 'errors');
+        }
+    }
 } catch (Throwable $e) {
     $save_error = get_class($e).': '.$e->getMessage().' in '.$e->getFile().':'.$e->getLine();
     dol_syslog('wallboxbilling setup error: '.$save_error, LOG_ERR);
@@ -271,6 +286,17 @@ print '<input type="submit" class="button" value="Abrechnung jetzt ausführen">'
 print '</td>';
 print '</tr>';
 print '</table>';
+print '</form>';
+
+// --- Diagnose: Test-Session ---
+print '<br>';
+print load_fiche_titre('Diagnose');
+print '<p style="color:#666">Eine Test-Session direkt in die Datenbank einfügen — prüft ob die DB-Seite funktioniert.</p>';
+print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'">';
+print '<input type="hidden" name="token" value="'.$token.'">';
+print '<input type="hidden" name="action" value="insert_test_session">';
+print '<input type="submit" class="button smallpaddingimp" value="Test-Session einfügen" onclick="return confirm(\'Test-Session (5 kWh) einfügen?\');">';
+print ' <span class="opacitymedium small">→ danach &quot;Ladevorgänge&quot; prüfen</span>';
 print '</form>';
 
 print dol_get_fiche_end();
