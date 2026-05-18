@@ -11,8 +11,14 @@
  *   3. Duplikatschutz: jede Session bekommt [sid:X]-Marker im Kommentar
  */
 
-require_once DOL_DOCUMENT_ROOT.'/core/class/commonobject.class.php';
-require_once DOL_DOCUMENT_ROOT.'/core/class/expensereport.class.php';
+// Pfade via __DIR__ ableiten — unabhängig von DOL_DOCUMENT_ROOT Konfiguration
+// billing.class.php liegt in htdocs/custom/wallboxbilling/class/ → 3 Ebenen hoch = htdocs/
+$_wbHtdocs = dirname(dirname(dirname(__DIR__)));
+require_once $_wbHtdocs.'/core/class/commonobject.class.php';
+if (!class_exists('ExpenseReport')) {
+    require_once $_wbHtdocs.'/expensereport/class/expensereport.class.php';
+}
+unset($_wbHtdocs);
 
 /**
  * WallboxBillingCron — monatliche Spesenabrechnungs-Automatisierung
