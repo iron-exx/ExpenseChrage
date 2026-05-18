@@ -45,6 +45,15 @@ llxHeader('', $page_title);
 $head = wallboxbillingPrepareHead();
 print dol_get_fiche_head($head, 'sessions', $page_title, -1, 'fa-bolt');
 
+// Gesamtanzahl aller Sessions (Diagnose für Admin)
+$totalCount = 0;
+if ($user->admin) {
+    $resCount = $db->query("SELECT COUNT(*) AS cnt FROM ".MAIN_DB_PREFIX."wallbox_sessions");
+    if ($resCount && ($objCnt = $db->fetch_object($resCount))) {
+        $totalCount = (int) $objCnt->cnt;
+    }
+}
+
 // Ladevorgänge aus DB lesen
 $sql = "SELECT s.rowid, s.rfid_hash, s.start_time, s.end_time, s.kwh,"
     ." s.wallbox_id, u.login, u.firstname, u.lastname"
@@ -62,6 +71,10 @@ $resql = $db->query($sql);
 
 if (!$resql) {
     dol_syslog('WallboxBilling index.php SQL error: '.$db->lasterror(), LOG_ERR);
+}
+
+if ($user->admin) {
+    print '<div class="info" style="margin-bottom:8px">Datensätze in llx_wallbox_sessions: <b>'.$totalCount.'</b></div>';
 }
 
 print '<table class="noborder centpercent">';
