@@ -3,6 +3,13 @@
  * Wallbox Billing — Admin/Setup-Seite
  */
 
+// Fehler sichtbar machen statt 500 (kann nach Debugging entfernt werden)
+@ini_set('display_errors', 0);
+@ini_set('log_errors', 1);
+set_error_handler(function($errno, $errstr, $errfile, $errline) {
+    throw new ErrorException($errstr, 0, $errno, $errfile, $errline);
+});
+
 $res = 0;
 if (!$res && !empty($_SERVER['CONTEXT_DOCUMENT_ROOT'])) {
     $res = @include $_SERVER['CONTEXT_DOCUMENT_ROOT'].'/main.inc.php';
@@ -40,7 +47,7 @@ if (!$user->admin) {
 
 $langs->loadLangs(array('admin', 'wallboxbilling@wallboxbilling'));
 
-// --- Auto-Migration: fehlende Spalten nachrüsten ohne Konsolen-Zugriff ---
+// --- Auto-Migration: fehlende Spalten nachrüsten ---
 $resql_cols = $db->query("SHOW COLUMNS FROM ".MAIN_DB_PREFIX."wallbox_rfid");
 if ($resql_cols) {
     $existing = array();
@@ -59,65 +66,58 @@ if ($resql_cols) {
 
 $action = GETPOST('action', 'aZ09');
 
+// --- CSRF-Token manuell prüfen (ohne checkToken() — Dolibarr-versionsunabhängig) ---
+$submitted_token = GETPOST('token', 'alpha');
+$token_ok = (empty($_SESSION['newtoken']) || $submitted_token === $_SESSION['newtoken']);
+
 // --- Aktionen verarbeiten ---
-if ($action === 'update') {
-    if (!checkToken()) {
-        accessforbidden('InvalidToken');
+$save_error = '';
+try {
+    if ($action === 'update' && !empty($submitted_token) && $token_ok) {
+        $price = price2num(GETPOST('WALLBOXBILLING_DEFAULT_PRICE', 'alpha'));
+        dolibarr_set_const($db, 'WALLBOXBILLING_DEFAULT_PRICE', $price, 'chaine', 0, '', $conf->entity);
+        setEventMessages($langs->trans('SetupSaved'), null, 'mesgs');
     }
-    $price = price2num(GETPOST('WALLBOXBILLING_DEFAULT_PRICE', 'alpha'));
-    dolibarr_set_const($db, 'WALLBOXBILLING_DEFAULT_PRICE', $price, 'chaine', 0, '', $conf->entity);
-    setEventMessages($langs->trans('SetupSaved'), null, 'mesgs');
-}
 
-if ($action === 'save_rfid') {
-    if (!checkToken()) {
-        accessforbidden('InvalidToken');
-    }
-    $user_id  = GETPOST('user_id', 'int');
-    $rfid_hex = trim(GETPOST('rfid_hex', 'alpha'));
-    $price    = price2num(GETPOST('price_kwh', 'alpha'));
+    if ($action === 'save_rfid' && !empty($submitted_token) && $token_ok) {
+        $user_id  = GETPOST('user_id', 'int');
+        $rfid_hex = trim(GETPOST('rfid_hex', 'alpha'));
+        $price    = price2num(GETPOST('price_kwh', 'alpha'));
 
-    if ($user_id > 0 && !empty($rfid_hex)) {
-        $rfid_hash = hash('sha256', strtoupper($rfid_hex));
-        dol_syslog('wallboxbilling: save RFID for user '.$user_id.' hash='.substr($rfid_hash, 0, 16).'...', LOG_INFO);
+        if ($user_id > 0 && !empty($rfid_hex)) {
+            $rfid_hash = hash('sha256', strtoupper($rfid_hex));
+            dol_syslog('wallboxbilling: save RFID user='.$user_id.' hash='.substr($rfid_hash, 0, 16).'...', LOG_INFO);
 
-        $db->begin();
-        $sql = "DELETE FROM ".MAIN_DB_PREFIX."wallbox_rfid WHERE fk_user = ".(int)$user_id
-            ." AND entity = ".(int)$conf->entity;
-        $db->query($sql);
-
-        $sql = "INSERT INTO ".MAIN_DB_PREFIX."wallbox_rfid"
-            ." (fk_user, rfid_hash, label, price_kwh, active, entity, date_creation)"
-            ." VALUES (".(int)$user_id
-            .", '".$db->escape($rfid_hash)."'"
-            .", '".$db->escape($rfid_hex)."'"
-            .", ".(float)$price
-            .", 1"
-            .", ".(int)$conf->entity
-            .", '".$db->idate(dol_now())."'"
-            .")";
-
-        if ($db->query($sql)) {
-            $db->commit();
+            $db->begin();
+            $db->query("DELETE FROM ".MAIN_DB_PREFIX."wallbox_rfid WHERE fk_user = ".(int)$user_id." AND entity = ".(int)$conf->entity);
+            $sql = "INSERT INTO ".MAIN_DB_PREFIX."wallbox_rfid"
+                ." (fk_user, rfid_hash, label, price_kwh, active, entity, date_creation)"
+                ." VALUES (".(int)$user_id
+                .", '".$db->escape($rfid_hash)."'"
+                .", '".$db->escape($rfid_hex)."'"
+                .", ".(float)$price
+                .", 1"
+                .", ".(int)$conf->entity
+                .", '".$db->idate(dol_now())."'"
+                .")";
+            if ($db->query($sql)) {
+                $db->commit();
+                setEventMessages($langs->trans('RFIDHashSaved'), null, 'mesgs');
+            } else {
+                $db->rollback();
+                setEventMessages($db->lasterror(), null, 'errors');
+            }
+        } elseif ($user_id > 0) {
+            $db->query("DELETE FROM ".MAIN_DB_PREFIX."wallbox_rfid WHERE fk_user = ".(int)$user_id." AND entity = ".(int)$conf->entity);
             setEventMessages($langs->trans('RFIDHashSaved'), null, 'mesgs');
-        } else {
-            $db->rollback();
-            setEventMessages($db->lasterror(), null, 'errors');
-        }
-    } elseif ($user_id > 0 && empty($rfid_hex)) {
-        // RFID löschen falls Feld geleert
-        $sql = "DELETE FROM ".MAIN_DB_PREFIX."wallbox_rfid WHERE fk_user = ".(int)$user_id
-            ." AND entity = ".(int)$conf->entity;
-        if ($db->query($sql)) {
-            setEventMessages($langs->trans('RFIDHashSaved'), null, 'mesgs');
-        } else {
-            setEventMessages($db->lasterror(), null, 'errors');
         }
     }
+} catch (Throwable $e) {
+    $save_error = get_class($e).': '.$e->getMessage().' in '.$e->getFile().':'.$e->getLine();
+    dol_syslog('wallboxbilling setup error: '.$save_error, LOG_ERR);
 }
 
 // --- Ausgabe ---
-// Token einmal generieren und in alle Formulare einsetzen
 $token = newToken();
 
 $page_title = $langs->trans('WallboxBillingSetup');
@@ -126,11 +126,17 @@ llxHeader('', $page_title);
 $head = wallboxbillingPrepareHead();
 print dol_get_fiche_head($head, 'setup', $page_title, -1, 'fa-bolt');
 
+if (!empty($save_error)) {
+    print '<div class="error"><b>Debug-Fehler (bitte melden):</b><br>'.dol_escape_htmltag($save_error).'</div><br>';
+}
+if (!$token_ok && !empty($submitted_token)) {
+    print '<div class="warning">Token abgelaufen – bitte Seite neu laden und erneut speichern.</div><br>';
+}
+
 // --- Konfiguration ---
 print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'">';
 print '<input type="hidden" name="token" value="'.$token.'">';
 print '<input type="hidden" name="action" value="update">';
-
 print '<table class="noborder centpercent">';
 print '<tr class="liste_titre"><td colspan="2">'.$langs->trans('WallboxConfiguration').'</td></tr>';
 print '<tr><td class="fieldrequired">'.$langs->trans('DefaultPricePerKwh').'</td>';
@@ -146,7 +152,6 @@ print '<br>';
 
 // --- RFID-Verwaltung ---
 print load_fiche_titre($langs->trans('WallboxUserRFIDManagement'));
-
 print '<table class="noborder centpercent">';
 print '<tr class="liste_titre">';
 print '<td>'.$langs->trans('User').'</td>';
@@ -166,7 +171,7 @@ $sql = "SELECT u.rowid, u.login, u.lastname, u.firstname,"
 $resql = $db->query($sql);
 if ($resql) {
     while ($obj = $db->fetch_object($resql)) {
-        $current_price = !empty($obj->price_kwh) ? price2num($obj->price_kwh) : getDolGlobalString('WALLBOXBILLING_DEFAULT_PRICE', '0.30');
+        $cur_price = !empty($obj->price_kwh) ? price2num($obj->price_kwh) : getDolGlobalString('WALLBOXBILLING_DEFAULT_PRICE', '0.30');
         print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'">';
         print '<input type="hidden" name="token" value="'.$token.'">';
         print '<input type="hidden" name="action" value="save_rfid">';
@@ -179,7 +184,7 @@ if ($resql) {
         print !empty($obj->rfid_hash) ? substr($obj->rfid_hash, 0, 16).'…' : '—';
         print '</span></td>';
         print '<td><input type="text" name="price_kwh" class="flat" size="6"'
-            .' value="'.dol_escape_htmltag((string)$current_price).'" placeholder="0.30"> &euro;/kWh</td>';
+            .' value="'.dol_escape_htmltag((string)$cur_price).'" placeholder="0.30"> &euro;/kWh</td>';
         print '<td><input type="submit" class="button smallpaddingimp" value="'.$langs->trans('Save').'"></td>';
         print '</tr></form>';
     }
