@@ -27,6 +27,7 @@ RUN apk add --no-cache \
 COPY main.py            /usr/local/bin/main.py
 COPY api_client.py      /usr/local/bin/api_client.py
 COPY session_manager.py /usr/local/bin/session_manager.py
+COPY web_server.py      /usr/local/bin/web_server.py
 COPY utils/             /usr/local/bin/utils/
 RUN chmod a+x /usr/local/bin/main.py
 
