@@ -14,6 +14,8 @@ require_once DOL_DOCUMENT_ROOT.'/api/class/api.class.php';
 
 /**
  * WallboxbillingApi - REST API für Session-Upload vom HA-Addon
+ *
+ * @access protected
  */
 class WallboxbillingApi extends DolibarrApi
 {
