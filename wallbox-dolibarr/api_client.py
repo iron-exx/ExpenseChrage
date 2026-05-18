@@ -144,29 +144,22 @@ class WallboxApiClient:
 
     def check_connection(self) -> bool:
         """
-        Prüft die Verbindung zu Dolibarr (D-03)
+        Prüft ob Dolibarr erreichbar ist (einfacher HTTP-Ping auf Basis-URL).
 
         Returns:
-            True wenn Verbindung erfolgreich und Modul erreichbar
+            True wenn Server antwortet (HTTP < 500 oder Redirect)
         """
-        url = f"{self.base_url}/api/index.php/wallboxbilling/health"
-
         try:
-            response = self.session.get(url, headers=self.headers, timeout=5)
-            if response.status_code == 200:
-                _LOGGER.info("Dolibarr API Verbindung erfolgreich (HTTP 200)")
-                return True
-            elif response.status_code == 401:
-                _LOGGER.warning("Dolibarr API: Token ungültig oder Modul-Berechtigung fehlt (HTTP 401)")
-                return False
-            else:
-                # Server antwortet — nehmen wir als erreichbar an (z.B. 404 wenn Modul nicht aktiviert)
-                _LOGGER.warning("Dolibarr API: HTTP %d — Server erreichbar, prüfe Modul-Aktivierung",
-                               response.status_code)
-                return response.status_code < 500
-
+            response = self.session.get(
+                self.base_url,
+                headers={"DOLAPIKEY": self.api_token},
+                timeout=5,
+                allow_redirects=True
+            )
+            _LOGGER.info("Dolibarr erreichbar: HTTP %d", response.status_code)
+            return response.status_code < 500
         except Exception as e:
-            _LOGGER.warning("Dolibarr API nicht erreichbar: %s", e)
+            _LOGGER.warning("Dolibarr nicht erreichbar: %s", e)
             return False
 
     def get_wallbox_status(self, wallbox_id: str = "alfen_eve") -> Dict[str, Any]:
