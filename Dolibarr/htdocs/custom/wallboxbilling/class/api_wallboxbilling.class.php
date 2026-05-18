@@ -45,8 +45,10 @@ class WallboxbillingApi extends DolibarrApi
      *
      * Empfängt Lade-Session vom HA-Addon und speichert in llx_wallbox_sessions
      *
-     * @param object|null $request_data JSON-Body mit Session-Daten
+     * @param array $request_data JSON-Body mit Session-Daten
      * @return array Response mit success, id, message
+     *
+     * @url POST /
      */
     public function post($request_data = null)
     {
