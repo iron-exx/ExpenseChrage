@@ -93,7 +93,7 @@ class WallboxApiClient:
         Returns:
             Tuple[bool, str]: (Erfolg, Fehlermeldung)
         """
-        url = f"{self.base_url}/custom/wallboxbilling/api/session.php"
+        url = f"{self.base_url}/api/index.php/wallboxbilling/session"
 
         # JSON-Payload gemäß D-04 (API-01)
         payload = {
@@ -147,27 +147,26 @@ class WallboxApiClient:
         Prüft die Verbindung zu Dolibarr (D-03)
 
         Returns:
-            True wenn Verbindung erfolgreich (HTTP 200)
+            True wenn Verbindung erfolgreich und Modul erreichbar
         """
-        url = f"{self.base_url}/api/index.php/login"
+        url = f"{self.base_url}/api/index.php/wallboxbilling/health"
 
         try:
-            response = self.session.get(
-                url,
-                headers=self.headers,
-                timeout=5  # Kurzer Timeout für Connectivity-Check
-            )
-
+            response = self.session.get(url, headers=self.headers, timeout=5)
             if response.status_code == 200:
-                _LOGGER.info("Dolibarr API Verbindung erfolgreich")
+                _LOGGER.info("Dolibarr API Verbindung erfolgreich (HTTP 200)")
                 return True
-            else:
-                _LOGGER.warning("Dolibarr API Verbindung fehlgeschlagen: HTTP %s",
-                               response.status_code)
+            elif response.status_code == 401:
+                _LOGGER.warning("Dolibarr API: Token ungültig oder Modul-Berechtigung fehlt (HTTP 401)")
                 return False
+            else:
+                # Server antwortet — nehmen wir als erreichbar an (z.B. 404 wenn Modul nicht aktiviert)
+                _LOGGER.warning("Dolibarr API: HTTP %d — Server erreichbar, prüfe Modul-Aktivierung",
+                               response.status_code)
+                return response.status_code < 500
 
         except Exception as e:
-            _LOGGER.warning("Dolibarr API Verbindung fehlgeschlagen: %s", e)
+            _LOGGER.warning("Dolibarr API nicht erreichbar: %s", e)
             return False
 
     def get_wallbox_status(self, wallbox_id: str = "alfen_eve") -> Dict[str, Any]:

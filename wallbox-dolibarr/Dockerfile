@@ -21,7 +21,8 @@ RUN apk add --no-cache \
     py3-aiohttp \
     py3-requests \
     py3-yaml \
-    sqlite-libs
+    sqlite-libs \
+    ca-certificates
 
 # Addon-Dateien kopieren
 COPY main.py            /usr/local/bin/main.py
