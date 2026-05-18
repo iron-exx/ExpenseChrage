@@ -48,8 +48,10 @@ class WallboxbillingApi extends DolibarrApi
      */
     public function postSession($request_data = null)
     {
-        // 1. Token-Validierung (SEC-03) - DolibarrApi prüft DOLAPIKEY automatisch
-        // Die Parent-Klasse prüft bereits den Token im Konstruktor oder bei jedem Request
+        // 1. Authentifizierung explizit erzwingen (SEC-03)
+        if (empty(DolibarrApiAccess::$user) || empty(DolibarrApiAccess::$user->id)) {
+            throw new RestException(401, 'Authentication required');
+        }
 
         // 2. Request-Daten holen (unterstützt sowohl JSON als auch Form-Daten)
         if ($request_data === null) {
@@ -177,16 +179,25 @@ class WallboxbillingApi extends DolibarrApi
     }
 
     /**
-     * GET /health - Gesundheitscheck für Monitoring
+     * GET /health - Gesundheitscheck für Monitoring (nur authentifizierte Nutzer)
+     *
+     * Hinweis: Der Dolibarr API-Explorer (Swagger UI) ist per Default ohne Login sichtbar.
+     * Um den Explorer selbst zu sperren: Dolibarr → Setup → Sonstige Parameter →
+     * MAIN_API_KEY_REQUIRED = 1 setzen.
      *
      * @return array Status-Info
      */
     public function getHealth()
     {
+        // Authentifizierung erzwingen — verhindert unauthentifizierten Zugriff
+        if (empty(DolibarrApiAccess::$user) || empty(DolibarrApiAccess::$user->id)) {
+            throw new RestException(401, 'Authentication required');
+        }
+
         return array(
-            'status' => 'ok',
-            'module' => 'wallboxbilling',
-            'version' => '1.0.0'
+            'status'  => 'ok',
+            'module'  => 'wallboxbilling',
+            'version' => '1.0.0',
         );
     }
 }
