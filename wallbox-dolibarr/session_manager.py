@@ -54,9 +54,9 @@ class SessionManager:
 
     def __init__(self, db_path: str = "/data/sessions.db"):
         self.db_path = db_path
-        self._init_database()
+        self._logger = logging.getLogger(__name__)  # muss vor _init_database() stehen
         self._last_rfid_time: Dict[str, float] = {}  # Für Debouncing
-        self._logger = logging.getLogger(__name__)
+        self._init_database()
 
     def _init_database(self):
         """Initialisiert die SQLite-Datenbank mit Sessions-Tabelle (PER-01, DB-01 Vorbereitung)"""
@@ -90,7 +90,7 @@ class SessionManager:
             cursor.execute('''
                 ALTER TABLE sessions ADD COLUMN transmitted_at TEXT
             ''')
-            _LOGGER.info("Datenbank-Schema erweitert: transmitted_at hinzugefügt")
+            self._logger.info("Datenbank-Schema erweitert: transmitted_at hinzugefügt")
         except sqlite3.OperationalError:
             # Spalte existiert bereits
             pass
