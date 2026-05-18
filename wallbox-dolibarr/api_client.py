@@ -93,7 +93,7 @@ class WallboxApiClient:
         Returns:
             Tuple[bool, str]: (Erfolg, Fehlermeldung)
         """
-        url = f"{self.base_url}/api/index.php/wallboxbilling/session"
+        url = f"{self.base_url}/api/index.php/wallboxbilling"
 
         # JSON-Payload gemäß D-04 (API-01)
         payload = {

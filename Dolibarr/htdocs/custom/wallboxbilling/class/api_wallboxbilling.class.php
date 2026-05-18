@@ -48,7 +48,7 @@ class WallboxbillingApi extends DolibarrApi
      * @param object|null $request_data JSON-Body mit Session-Daten
      * @return array Response mit success, id, message
      */
-    public function postSession($request_data = null)
+    public function post($request_data = null)
     {
         // 1. Authentifizierung explizit erzwingen (SEC-03)
         if (empty(DolibarrApiAccess::$user) || empty(DolibarrApiAccess::$user->id)) {
