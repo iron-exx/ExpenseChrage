@@ -30,7 +30,7 @@ function wallboxbillingPrepareHead()
     $h++;
 
     if (!empty($user->admin)) {
-        $head[$h][0] = dol_buildpath('/custom/wallboxbilling/admin.php', 1);
+        $head[$h][0] = dol_buildpath('/custom/wallboxbilling/admin/setup.php', 1);
         $head[$h][1] = $langs->trans('WallboxBillingSetup');
         $head[$h][2] = 'setup';
         $h++;

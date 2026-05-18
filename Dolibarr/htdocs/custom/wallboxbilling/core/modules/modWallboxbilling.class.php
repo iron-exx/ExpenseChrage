@@ -35,7 +35,7 @@ class modWallboxbilling extends DolibarrModules
         // strtoupper(name) enthält Leerzeichen, daher fix auf den Modul-Slug.
         $this->const_name = 'MAIN_MODULE_'.strtoupper($this->name); // MAIN_MODULE_WALLBOXBILLING
         $this->special = 0;
-        $this->picto = 'fa-charging-station'; // FontAwesome-Picto (immer verfügbar)
+        $this->picto = 'fa-bolt'; // FontAwesome-Picto (universell verfügbar)
         $this->editor_name = 'Wallbox-Dolibarr';
         $this->editor_url = '';
 
@@ -55,7 +55,7 @@ class modWallboxbilling extends DolibarrModules
             'hooks' => array(),
             'moduleforexternal' => 0,
         );
-        $this->config_page_url = array('admin.php@wallboxbilling');
+        $this->config_page_url = array('setup.php@wallboxbilling');
 
         // Abhängigkeiten
         $this->depends = array(); // Keine besonderen Abhängigkeiten
@@ -162,7 +162,7 @@ class modWallboxbilling extends DolibarrModules
             'titre' => 'WallboxBillingSetup',
             'mainmenu' => 'wallboxbilling',
             'leftmenu' => 'wallboxbilling_setup',
-            'url' => '/custom/wallboxbilling/admin.php',
+            'url' => '/custom/wallboxbilling/admin/setup.php',
             'langs' => 'wallboxbilling@wallboxbilling',
             'position' => 1000 + $m,
             'enabled' => '$conf->wallboxbilling->enabled',
