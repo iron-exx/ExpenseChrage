@@ -49,12 +49,11 @@ print dol_get_fiche_head($head, 'sessions', $page_title, -1, 'fa-bolt');
 $sql = "SELECT s.rowid, s.rfid_hash, s.start_time, s.end_time, s.kwh,"
     ." s.wallbox_id, u.login, u.firstname, u.lastname"
     ." FROM ".MAIN_DB_PREFIX."wallbox_sessions s"
-    ." LEFT JOIN ".MAIN_DB_PREFIX."wallbox_rfid r ON r.rfid_hash = s.rfid_hash"
+    ." LEFT JOIN ".MAIN_DB_PREFIX."wallbox_rfid r ON r.rfid_hash = s.rfid_hash AND r.entity = ".(int)$conf->entity
     ." LEFT JOIN ".MAIN_DB_PREFIX."user u ON u.rowid = r.fk_user"
-    ." WHERE s.entity = ".(int)$conf->entity;
+    ." WHERE 1=1";
 
 if (!$user->admin && !$user->hasRight('wallboxbilling', 'session', 'write')) {
-    // Nur eigene Ladevorgänge
     $sql .= " AND r.fk_user = ".(int)$user->id;
 }
 $sql .= " ORDER BY s.start_time DESC";
