@@ -394,6 +394,46 @@ class SessionManager:
 
         return [dict(row) for row in rows]
 
+    def add_manual_session(self, rfid_hash: str, kwh: float, wallbox_id: str,
+                           session_date: str) -> Optional[int]:
+        """
+        Legt eine manuelle Session direkt als 'completed' an (für UI-Eingaben).
+
+        Args:
+            rfid_hash:    SHA-256 Hash der RFID-Karte
+            kwh:          Verbrauchte Energie in kWh
+            wallbox_id:   Wallbox-ID aus der Konfiguration
+            session_date: Datum als ISO-String (YYYY-MM-DD)
+
+        Returns:
+            Session-ID oder None bei Fehler
+        """
+        try:
+            date_obj = datetime.fromisoformat(session_date)
+        except (ValueError, TypeError):
+            date_obj = datetime.now()
+
+        start_time = date_obj.replace(hour=12, minute=0, second=0, microsecond=0).isoformat()
+        end_time   = date_obj.replace(hour=12, minute=1, second=0, microsecond=0).isoformat()
+        now        = datetime.now().isoformat()
+
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO sessions
+                (rfid_hash, wallbox_id, start_time, end_time,
+                 start_energy_kwh, end_energy_kwh, total_kwh, status, created_at)
+            VALUES (?, ?, ?, ?, 0.0, ?, ?, 'completed', ?)
+        ''', (rfid_hash, wallbox_id, start_time, end_time, kwh, kwh, now))
+
+        session_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+
+        self._logger.info("Manuelle Session erstellt: ID=%s, %.3f kWh, Datum=%s",
+                          session_id, kwh, session_date)
+        return session_id
+
     def transmit_completed_sessions(self, api_client: Any) -> Dict[str, Any]:
         """
         Überträgt abgeschlossene (noch nicht übertragene) Sessions an Dolibarr

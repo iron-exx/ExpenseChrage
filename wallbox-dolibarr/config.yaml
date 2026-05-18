@@ -5,6 +5,8 @@ slug: "wallbox-dolibarr"
 url: "https://github.com/iron-exx/evcharge-dolibarr-invoice"
 init: false
 homeassistant_api: true
+ingress: true
+ingress_port: 8099
 
 arch:
   - aarch64

@@ -24,6 +24,9 @@ from session_manager import SessionManager, CHARGING, IDLE, STOPPED
 # API Client importieren (Phase 3)
 from api_client import WallboxApiClient
 
+# Ingress Web-Server für manuelle Sessions
+from web_server import start_web_server
+
 # Logging Setup (D-17, D-20)
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
 logging.basicConfig(
@@ -369,6 +372,10 @@ async def main():
         if api_client:
             transmission_task = asyncio.create_task(periodic_transmission())
             _LOGGER.info("API-Transmission Hintergrund-Task gestartet")
+
+        # Ingress Web-Server für manuelle Ladevorgänge starten
+        asyncio.create_task(start_web_server(session_manager, current_config, port=8099))
+        _LOGGER.info("Ingress Web-Server Task gestartet (Port 8099)")
 
         # Sensor-Updates abonnieren (event-basiert, D-10) - blockiert bis zur Unterbrechung
         await ha_ws.subscribe_entities(sensor_callback)
