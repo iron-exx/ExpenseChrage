@@ -40,10 +40,9 @@ CHARGING = "Charging"
 IDLE = "Idle"
 STOPPED = "Stopped"
 
-# Alfen Sensoren (D-09)
-SENSOR_RFID = "sensor.alfen_eve_tag_socket_1"
-SENSOR_ENERGY = "sensor.alfen_energy_total"
-SENSOR_STATE = None  # Wird dynamisch aus Alfen Integration ermittelt
+# Alfen Sensoren — Standardwerte (überschreibbar in Addon-Konfiguration)
+_DEFAULT_SENSOR_RFID   = "sensor.alfen_eve_tag_socket_1"
+_DEFAULT_SENSOR_ENERGY = "sensor.alfen_energy_total"
 
 # Globale Variablen für Session-Tracking
 session_manager = None
@@ -175,10 +174,14 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
     """Callback für Sensor-Updates mit Session-Tracking (D-09, D-10, HA-03-HA-07)"""
     global session_manager, current_config, ha_ws
 
+    sensor_rfid   = current_config.get('sensor_rfid',   _DEFAULT_SENSOR_RFID)
+    sensor_energy = current_config.get('sensor_energy', _DEFAULT_SENSOR_ENERGY)
+    sensor_state  = current_config.get('sensor_state', '') or ''
+
     state_value = state.get('state')
 
     # RFID Sensor (HA-03, HA-04, HA-07)
-    if entity_id == SENSOR_RFID:
+    if entity_id == sensor_rfid:
         if state_value and state_value != 'unknown':
             # Debouncing prüfen (HA-07)
             if not session_manager.debounce_rfid(state_value):
@@ -192,7 +195,7 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
                 return
 
             # Energie-Stand für Session-Start abfragen (PER-05: atomar)
-            energy_state = await ha_ws.get_state(SENSOR_ENERGY)
+            energy_state = await ha_ws.get_state(sensor_energy)
             start_energy = float(energy_state.get('state', 0)) if energy_state else 0.0
 
             # Session starten (HA-03, HA-04)
@@ -203,7 +206,7 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
             _LOGGER.debug("RFID Sensor unbekannt oder leer")
 
     # Energie Sensor (HA-06)
-    elif entity_id == SENSOR_ENERGY:
+    elif entity_id == sensor_energy:
         try:
             kwh = float(state_value) if state_value else 0.0
 
@@ -218,14 +221,15 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
         except (ValueError, TypeError):
             _LOGGER.warning("Ungültiger Energie-Wert: %s", state_value)
 
-    # Ladezustand (aus Alfen Integration) - HA-05
-    elif 'charging' in entity_id.lower() or 'state' in entity_id.lower():
+    # Ladezustand — konfigurierter Sensor oder Fallback auf Fuzzy-Match (HA-05)
+    elif (sensor_state and entity_id == sensor_state) or \
+         (not sensor_state and ('charging' in entity_id.lower() or 'state' in entity_id.lower())):
         active_session = session_manager.get_active_session()
 
         if state_value == IDLE or state_value == STOPPED:
             if active_session:
                 # Session beenden (HA-05, HA-06)
-                energy_state = await ha_ws.get_state(SENSOR_ENERGY)
+                energy_state = await ha_ws.get_state(sensor_energy)
                 end_energy = float(energy_state.get('state', 0)) if energy_state else 0.0
 
                 completed = session_manager.end_session(end_energy)

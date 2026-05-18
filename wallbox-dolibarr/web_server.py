@@ -91,13 +91,14 @@ tbody tr:last-child td { border-bottom: none }
 .empty { color: #aaa; text-align: center; padding: 24px; font-size: 14px }
 """
 
-def _base(nav_html, content):
+def _base(nav_html, content, base_href=''):
+    base_tag = f'  <base href="{base_href}/">\n' if base_href else ''
     return f"""<!DOCTYPE html>
 <html lang="de">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Wallbox Ladevorgänge</title>
+{base_tag}  <title>Wallbox Ladevorgänge</title>
   <style>{_CSS}</style>
 </head>
 <body>
@@ -158,7 +159,7 @@ def _month_name(month):
 # Seiten-Builder
 # ---------------------------------------------------------------------------
 
-def _build_form_page(session_manager, config, message_html=''):
+def _build_form_page(session_manager, config, message_html='', base_href=''):
     whitelist = config.get('rfid_whitelist', [])
     today     = datetime.now().date().isoformat()
 
@@ -215,10 +216,10 @@ def _build_form_page(session_manager, config, message_html=''):
 </div>
 {sessions_block}"""
 
-    return _base(_nav('form'), content)
+    return _base(_nav('form'), content, base_href)
 
 
-def _build_history_page(session_manager, year, month):
+def _build_history_page(session_manager, year, month, base_href=''):
     months = _db_months(session_manager.db_path)
 
     # Fallback: aktueller Monat
@@ -233,7 +234,7 @@ def _build_history_page(session_manager, year, month):
     for y, m in months:
         active = 'active' if (y == year and m == month) else ''
         tabs_html += (
-            f'<a href="/history?year={y}&month={m}" class="month-tab {active}">'
+            f'<a href="history?year={y}&month={m}" class="month-tab {active}">'
             f'{_month_name(m)} {y}</a>'
         )
 
@@ -290,7 +291,7 @@ def _build_history_page(session_manager, year, month):
   {table_html}
 </div>"""
 
-    return _base(_nav('history'), content)
+    return _base(_nav('history'), content, base_href)
 
 # ---------------------------------------------------------------------------
 # App-Factory
@@ -305,16 +306,18 @@ def create_app(session_manager, config, api_state):
 
     # -- GET / ---------------------------------------------------------------
     async def handle_get(request):
+        base_href = request.headers.get('X-Ingress-Path', '').rstrip('/')
         msg = request.rel_url.query.get('msg', '')
         t   = request.rel_url.query.get('t', '')
         msg_html = f'<div class="msg {t}">{msg}</div>' if msg else ''
         return web.Response(
-            text=_build_form_page(session_manager, config, msg_html),
+            text=_build_form_page(session_manager, config, msg_html, base_href=base_href),
             content_type='text/html'
         )
 
     # -- POST / --------------------------------------------------------------
     async def handle_post(request):
+        base_href = request.headers.get('X-Ingress-Path', '').rstrip('/')
         msg_html = ''
         try:
             data     = await request.post()
@@ -341,12 +344,13 @@ def create_app(session_manager, config, api_state):
             msg_html = f'<div class="msg err">Fehler: {exc}</div>'
 
         return web.Response(
-            text=_build_form_page(session_manager, config, msg_html),
+            text=_build_form_page(session_manager, config, msg_html, base_href=base_href),
             content_type='text/html'
         )
 
     # -- POST /transmit -------------------------------------------------------
     async def handle_transmit(request):
+        base_href = request.headers.get('X-Ingress-Path', '').rstrip('/')
         client = api_state.get('client')
 
         if not client:
@@ -381,16 +385,17 @@ def create_app(session_manager, config, api_state):
                 msg_html = f'<div class="msg err">Übertragungsfehler: {exc}</div>'
 
         return web.Response(
-            text=_build_form_page(session_manager, config, msg_html),
+            text=_build_form_page(session_manager, config, msg_html, base_href=base_href),
             content_type='text/html'
         )
 
-    # -- GET /history (auch POST-Fallback für HA-Ingress-Redirects) -----------
+    # -- GET /history --------------------------------------------------------
     async def handle_history(request):
+        base_href = request.headers.get('X-Ingress-Path', '').rstrip('/')
         year  = int(request.rel_url.query.get('year',  0))
         month = int(request.rel_url.query.get('month', 0))
         return web.Response(
-            text=_build_history_page(session_manager, year, month),
+            text=_build_history_page(session_manager, year, month, base_href=base_href),
             content_type='text/html'
         )
 

@@ -21,6 +21,9 @@ options:
   dolibarr_url: "https://dolibarr.example.com"
   api_token: ""
   transmit_interval: 300
+  sensor_rfid: "sensor.alfen_eve_tag_socket_1"
+  sensor_energy: "sensor.alfen_energy_total"
+  sensor_state: ""
 
 schema:
   log_level: "list(DEBUG|INFO|WARNING|ERROR)"
@@ -31,3 +34,6 @@ schema:
   dolibarr_url: str
   api_token: str
   transmit_interval: int
+  sensor_rfid: str
+  sensor_energy: str
+  sensor_state: str
