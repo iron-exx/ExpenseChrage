@@ -136,7 +136,7 @@ try {
         $sqlT  = "INSERT INTO ".MAIN_DB_PREFIX."wallbox_sessions"
                . " (fk_user, rfid_hash, wallbox_id, start_time, end_time, kwh,"
                . "  price_per_kwh, total_cost, status, date_creation, transmitted_at)"
-               . " VALUES (".(int)$user->id.", 'TEST_HASH_0000000000000000000000000000000000000000000000000000000000000000',"
+               . " VALUES (".(int)$user->id.", '0000000000000000000000000000000000000000000000000000000000000000',"
                . " 'test_wallbox', '".$start."', '".$now."', 5.0, 0.30, 1.50, 'completed', '".$now."', '".$now."')";
         if ($db->query($sqlT)) {
             setEventMessages('Test-Session eingefügt (ID: '.(int)$db->last_insert_id(MAIN_DB_PREFIX.'wallbox_sessions').'). Jetzt Ladevorgänge öffnen.', null, 'mesgs');
