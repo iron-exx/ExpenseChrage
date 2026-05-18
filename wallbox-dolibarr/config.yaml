@@ -23,7 +23,7 @@ options:
   transmit_interval: 300
   sensor_rfid: "sensor.alfen_eve_tag_socket_1"
   sensor_energy: "sensor.alfen_energy_total"
-  sensor_state: ""
+  sensor_state: "sensor.alfen_eve_display_state_socket_1"
 
 schema:
   log_level: "list(DEBUG|INFO|WARNING|ERROR)"
