@@ -19,6 +19,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit;
 }
 
+// GET: Diagnose-Endpoint — ohne Auth, zeigt ob PHP erreichbar ist
+if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+    echo json_encode([
+        'status'   => 'ok',
+        'endpoint' => 'wallboxbilling/receive.php',
+        'message'  => 'POST with DOLAPIKEY header required for session upload',
+        'php'      => PHP_VERSION,
+    ]);
+    exit;
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
     echo json_encode(['error' => 'Method Not Allowed']);
@@ -55,7 +66,10 @@ if (!empty($_SERVER['HTTP_DOLAPIKEY'])) {
     }
 }
 
+dol_syslog('wallboxbilling receive: POST request from '.$_SERVER['REMOTE_ADDR'], LOG_INFO);
+
 if (empty($apiKey)) {
+    dol_syslog('wallboxbilling receive: missing DOLAPIKEY header', LOG_WARNING);
     http_response_code(401);
     echo json_encode(['error' => 'Missing DOLAPIKEY header']);
     exit;
@@ -67,6 +81,7 @@ $sqlAuth = "SELECT rowid FROM ".MAIN_DB_PREFIX."user"
          ." AND statut = 1 AND entity IN (0, ".(int)$conf->entity.")";
 $resAuth = $db->query($sqlAuth);
 if (!$resAuth || $db->num_rows($resAuth) == 0) {
+    dol_syslog('wallboxbilling receive: auth failed — key='.substr($apiKey, 0, 8).'***', LOG_WARNING);
     http_response_code(401);
     echo json_encode(['error' => 'Invalid or inactive API key']);
     exit;
@@ -75,6 +90,7 @@ if (!$resAuth || $db->num_rows($resAuth) == 0) {
 // JSON Body lesen
 $data = json_decode(file_get_contents('php://input'), true);
 if (!$data) {
+    dol_syslog('wallboxbilling receive: invalid JSON body', LOG_WARNING);
     http_response_code(400);
     echo json_encode(['error' => 'Invalid JSON body']);
     exit;
@@ -83,6 +99,7 @@ if (!$data) {
 // Pflichtfelder prüfen
 foreach (['rfid_hash', 'wallbox_id', 'start_time', 'end_time', 'kwh'] as $f) {
     if (!isset($data[$f]) || $data[$f] === '') {
+        dol_syslog('wallboxbilling receive: missing field '.$f, LOG_WARNING);
         http_response_code(400);
         echo json_encode(['error' => 'Missing required field: '.$f]);
         exit;
@@ -96,16 +113,19 @@ $startTs   = strtotime($data['start_time']);
 $endTs     = strtotime($data['end_time']);
 
 if (!preg_match('/^[a-f0-9]{64}$/i', $rfidHash)) {
+    dol_syslog('wallboxbilling receive: invalid rfid_hash='.$rfidHash, LOG_WARNING);
     http_response_code(400);
     echo json_encode(['error' => 'Invalid rfid_hash (must be SHA-256 hex, 64 chars)']);
     exit;
 }
 if ($kwh < 0) {
+    dol_syslog('wallboxbilling receive: negative kwh='.$kwh, LOG_WARNING);
     http_response_code(400);
     echo json_encode(['error' => 'kwh must be >= 0']);
     exit;
 }
 if (!$startTs || !$endTs || $endTs <= $startTs) {
+    dol_syslog('wallboxbilling receive: bad timestamps start='.$data['start_time'].' end='.$data['end_time'], LOG_WARNING);
     http_response_code(400);
     echo json_encode(['error' => 'Invalid or illogical timestamps']);
     exit;
