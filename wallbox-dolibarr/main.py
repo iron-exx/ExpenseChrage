@@ -297,6 +297,7 @@ async def main():
 
     # API Client initialisieren — flat config (dolibarr_url auf Top-Level)
     api_client = None
+    api_state  = {'client': None}   # mutable — wird an Web-Server weitergegeben
     dolibarr_url = current_config.get("dolibarr_url", "")
     api_token    = current_config.get("api_token", "")
     if dolibarr_url and dolibarr_url != "https://dolibarr.example.com" and api_token:
@@ -307,6 +308,7 @@ async def main():
                 timeout=30
             )
             if api_client.check_connection():
+                api_state['client'] = api_client
                 _LOGGER.info("Dolibarr API Verbindung erfolgreich: %s", dolibarr_url)
             else:
                 _LOGGER.warning("Dolibarr API nicht erreichbar — wird später erneut versucht")
@@ -374,7 +376,7 @@ async def main():
             _LOGGER.info("API-Transmission Hintergrund-Task gestartet")
 
         # Ingress Web-Server für manuelle Ladevorgänge starten
-        asyncio.create_task(start_web_server(session_manager, current_config, port=8099))
+        asyncio.create_task(start_web_server(session_manager, current_config, api_state, port=8099))
         _LOGGER.info("Ingress Web-Server Task gestartet (Port 8099)")
 
         # Sensor-Updates abonnieren (event-basiert, D-10) - blockiert bis zur Unterbrechung
