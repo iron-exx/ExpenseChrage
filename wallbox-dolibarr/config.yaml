@@ -15,6 +15,7 @@ options:
   wallbox_id: "meine_wallbox"
   rfid_whitelist:
     - "EFCD083E"
+  ha_token: ""
   dolibarr_url: "https://dolibarr.example.com"
   api_token: ""
   transmit_interval: 300
@@ -24,6 +25,7 @@ schema:
   wallbox_id: str
   rfid_whitelist:
     - str
+  ha_token: str
   dolibarr_url: str
   api_token: str
   transmit_interval: int

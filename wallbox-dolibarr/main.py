@@ -76,11 +76,11 @@ def load_config():
 class HomeAssistantWebsocket:
     """Verbindung zur Home Assistant Websocket API (D-02, D-10)"""
 
-    def __init__(self, host: str = "homeassistant", port: int = 8123):
+    def __init__(self, host: str = "homeassistant", port: int = 8123, token: str = ''):
         self.host = host
         self.port = port
         self.ws_url = f"ws://{host}:{port}/api/websocket"
-        self.access_token = os.getenv('SUPERVISOR_TOKEN', '')
+        self.access_token = token or os.getenv('SUPERVISOR_TOKEN', '')
         self.session_id: Optional[str] = None
         self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
         self._session: Optional[aiohttp.ClientSession] = None
@@ -292,30 +292,43 @@ async def main():
     # Konfiguration laden (für Whitelist und API)
     current_config = load_config()
 
-    # API Client initialisieren (nur wenn konfiguriert, Task 4)
+    # API Client initialisieren — flat config (dolibarr_url auf Top-Level)
     api_client = None
-    api_config = current_config.get("api", {})
-    if api_config.get("dolibarr_url"):
+    dolibarr_url = current_config.get("dolibarr_url", "")
+    api_token    = current_config.get("api_token", "")
+    if dolibarr_url and dolibarr_url != "https://dolibarr.example.com" and api_token:
         try:
             api_client = WallboxApiClient(
-                base_url=api_config["dolibarr_url"],
-                api_token=api_config.get("api_token", ""),
-                timeout=api_config.get("timeout", 30)
+                base_url=dolibarr_url,
+                api_token=api_token,
+                timeout=30
             )
-
-            # Verbindung testen
             if api_client.check_connection():
-                _LOGGER.info("Dolibarr API Verbindung erfolgreich")
+                _LOGGER.info("Dolibarr API Verbindung erfolgreich: %s", dolibarr_url)
             else:
-                _LOGGER.warning("Dolibarr API Verbindung fehlgeschlagen - wird später erneut versucht")
+                _LOGGER.warning("Dolibarr API nicht erreichbar — wird später erneut versucht")
                 api_client = None
         except Exception as e:
             _LOGGER.error("Fehler beim Initialisieren des API-Clients: %s", e)
             api_client = None
     else:
-        _LOGGER.info("Keine API-Konfiguration - Addon läuft ohne API-Transmission")
+        _LOGGER.info("Keine Dolibarr API-Konfiguration — Addon läuft ohne API-Transmission")
 
-    ha_ws = HomeAssistantWebsocket()
+    # HA-Token ermitteln: SUPERVISOR_TOKEN hat Vorrang, Fallback auf ha_token aus Konfiguration
+    supervisor_token = os.getenv('SUPERVISOR_TOKEN', '')
+    config_ha_token  = current_config.get('ha_token', '')
+    ha_token = supervisor_token or config_ha_token
+    if not ha_token:
+        _LOGGER.error(
+            "Kein HA-Token verfügbar! Bitte Long-Lived Access Token unter "
+            "Einstellungen → Profil → Langlebige Zugriffstoken erstellen "
+            "und als 'ha_token' in der Addon-Konfiguration eintragen."
+        )
+    else:
+        token_src = 'SUPERVISOR_TOKEN' if supervisor_token else 'ha_token (Konfiguration)'
+        _LOGGER.info("HA-Authentifizierung via %s", token_src)
+
+    ha_ws = HomeAssistantWebsocket(token=ha_token)
 
     try:
         # Verbinden
@@ -329,7 +342,7 @@ async def main():
             """Periodische API-Übertragung als Hintergrund-Task"""
             import time
             last_transmit = 0
-            transmit_interval = api_config.get("transmit_interval", 300)
+            transmit_interval = current_config.get("transmit_interval", 300)
 
             while True:
                 if api_client:
