@@ -51,6 +51,9 @@ _HTML = """<!DOCTYPE html>
     .session-row:last-child{{border-bottom:none}}
     .session-kwh{{font-weight:700;color:#03a9f4}}
     .session-meta{{color:#999;font-size:12px}}
+    .tag{{display:inline-block;padding:2px 7px;border-radius:10px;font-size:11px;font-weight:600}}
+    .tag-ok{{background:#e8f5e9;color:#2e7d32}}
+    .tag-pending{{background:#fff3e0;color:#e65100}}
   </style>
 </head>
 <body>
@@ -95,14 +98,20 @@ def _build_page(session_manager, config, message_html=''):
         if rows:
             rows_html = ''
             for s in rows:
-                kwh  = s.get('total_kwh') or 0
-                date = (s.get('start_time') or '')[:10]
-                rid  = (s.get('rfid_hash') or '')[:8]
-                manual = ' • manuell' if s.get('start_time', '').endswith('T12:00:00') else ''
+                kwh        = s.get('total_kwh') or 0
+                date       = (s.get('start_time') or '')[:10]
+                rid        = (s.get('rfid_hash') or '')[:8]
+                manual     = ' • manuell' if s.get('start_time', '').endswith('T12:00:00') else ''
+                transmitted = s.get('transmitted_at')
+                if transmitted:
+                    status_tag = '<span class="tag tag-ok">&#10003; übertragen</span>'
+                else:
+                    status_tag = '<span class="tag tag-pending">&#9679; ausstehend</span>'
                 rows_html += (
                     f'<div class="session-row">'
                     f'<span><span class="session-kwh">{kwh:.3f} kWh</span>'
                     f'<br><span class="session-meta">{date} • {rid}…{manual}</span></span>'
+                    f'{status_tag}'
                     f'</div>'
                 )
             sessions_html = f'<div class="sessions"><h3>Letzte Sessions</h3>{rows_html}</div>'
