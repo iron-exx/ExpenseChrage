@@ -1,12 +1,20 @@
 <?php
 /**
- * Wallbox Billing — Session Upload Endpoint
+ * Wallbox Billing — Session Upload Endpoint (v1.1.0: direkt in Spesenabrechnung)
  *
  * URL:    POST /custom/wallboxbilling/receive.php
  * Header: DOLAPIKEY: <dolibarr_api_key>
  * Body:   JSON { rfid_hash, wallbox_id, start_time, end_time, kwh }
  *
- * Kein /api/ im Pfad — wird direkt von PHP ausgeführt, nicht durch Restler geroutet.
+ * Architektur ab 1.1.0:
+ *   1. RFID-Hash → fk_user via wallbox_rfid auflösen
+ *   2. Spesenabrechnung (Draft) für Session-Monat des Users finden
+ *      → falls keine: neue Draft-Spesenabrechnung anlegen
+ *   3. Spesentyp TK_ELE sicherstellen
+ *   4. Session als Zeile in expensereport_det einfügen (Duplikat-Check via Marker)
+ *   5. Spesenabrechnungs-Summen aktualisieren
+ *
+ * KEIN INSERT in llx_wallbox_sessions mehr.
  */
 
 header('Content-Type: application/json; charset=utf-8');
@@ -23,8 +31,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     echo json_encode([
         'status'   => 'ok',
-        'version'  => '1.0.12',
-        'nologin'  => 'define-active',
+        'version'  => '1.1.0',
+        'mode'     => 'direct-to-expensereport',
         'endpoint' => 'wallboxbilling/receive.php',
         'message'  => 'POST with DOLAPIKEY header required for session upload',
         'php'      => PHP_VERSION,
@@ -39,7 +47,6 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 
 // Dolibarr laden — define()-Konstanten verhindern Login-Redirect für API-Requests
-// (Variablen wie $nologin=1 werden in Dolibarr 20+ ignoriert)
 if (!defined('NOLOGIN'))         define('NOLOGIN', '1');
 if (!defined('NOCSRFCHECK'))     define('NOCSRFCHECK', '1');
 if (!defined('NOTOKENRENEWAL'))  define('NOTOKENRENEWAL', '1');
@@ -47,8 +54,6 @@ if (!defined('NOREQUIREMENU'))   define('NOREQUIREMENU', '1');
 if (!defined('NOREQUIREHTML'))   define('NOREQUIREHTML', '1');
 if (!defined('NOREQUIREAJAX'))   define('NOREQUIREAJAX', '1');
 if (!defined('NOIPCHECK'))       define('NOIPCHECK', '1');
-$nologin     = 1; // Legacy-Kompatibilität
-$nocsrfcheck = 1;
 $res = 0;
 if (!$res && !empty($_SERVER['CONTEXT_DOCUMENT_ROOT'])) {
     $res = @include $_SERVER['CONTEXT_DOCUMENT_ROOT'].'/main.inc.php';
@@ -68,7 +73,7 @@ if (!$res) {
     exit;
 }
 
-// DOLAPIKEY aus Header lesen
+// ===== DOLAPIKEY Auth =====
 $apiKey = '';
 if (!empty($_SERVER['HTTP_DOLAPIKEY'])) {
     $apiKey = $_SERVER['HTTP_DOLAPIKEY'];
@@ -78,42 +83,37 @@ if (!empty($_SERVER['HTTP_DOLAPIKEY'])) {
     }
 }
 
-dol_syslog('wallboxbilling receive: POST request from '.$_SERVER['REMOTE_ADDR'], LOG_INFO);
+dol_syslog('wallboxbilling receive: POST from '.$_SERVER['REMOTE_ADDR'], LOG_INFO);
 
 if (empty($apiKey)) {
-    dol_syslog('wallboxbilling receive: missing DOLAPIKEY header', LOG_WARNING);
     http_response_code(401);
     echo json_encode(['error' => 'Missing DOLAPIKEY header']);
     exit;
 }
 
-// User per API-Key authentifizieren
-// Dolibarr 20+ speichert api_key als SHA-256-Hash → beide Varianten prüfen
 $apiKeyHashed = hash('sha256', $apiKey);
 $sqlAuth = "SELECT rowid FROM ".MAIN_DB_PREFIX."user"
          ." WHERE (api_key = '".$db->escape($apiKey)."' OR api_key = '".$db->escape($apiKeyHashed)."')"
          ." AND statut = 1 AND entity IN (0, ".(int)$conf->entity.")";
 $resAuth = $db->query($sqlAuth);
 if (!$resAuth || $db->num_rows($resAuth) == 0) {
-    dol_syslog('wallboxbilling receive: auth failed — key='.substr($apiKey, 0, 8).'*** hash='.substr($apiKeyHashed, 0, 8).'***', LOG_WARNING);
     http_response_code(401);
     echo json_encode(['error' => 'Invalid or inactive API key']);
     exit;
 }
+$objAuth = $db->fetch_object($resAuth);
+$apiUserId = (int) $objAuth->rowid;
 
-// JSON Body lesen
+// ===== JSON Body =====
 $data = json_decode(file_get_contents('php://input'), true);
 if (!$data) {
-    dol_syslog('wallboxbilling receive: invalid JSON body', LOG_WARNING);
     http_response_code(400);
     echo json_encode(['error' => 'Invalid JSON body']);
     exit;
 }
 
-// Pflichtfelder prüfen
 foreach (['rfid_hash', 'wallbox_id', 'start_time', 'end_time', 'kwh'] as $f) {
     if (!isset($data[$f]) || $data[$f] === '') {
-        dol_syslog('wallboxbilling receive: missing field '.$f, LOG_WARNING);
         http_response_code(400);
         echo json_encode(['error' => 'Missing required field: '.$f]);
         exit;
@@ -123,76 +123,183 @@ foreach (['rfid_hash', 'wallbox_id', 'start_time', 'end_time', 'kwh'] as $f) {
 $rfidHash  = $data['rfid_hash'];
 $wallboxId = $data['wallbox_id'];
 $kwh       = (float) $data['kwh'];
-// Mikrosekunden entfernen bevor strtotime() — Python isoformat() sendet .123456
 $startStr  = preg_replace('/\.\d+/', '', $data['start_time']);
 $endStr    = preg_replace('/\.\d+/', '', $data['end_time']);
 $startTs   = strtotime($startStr);
 $endTs     = strtotime($endStr);
 
 if (!preg_match('/^[a-f0-9]{64}$/i', $rfidHash)) {
-    dol_syslog('wallboxbilling receive: invalid rfid_hash='.$rfidHash, LOG_WARNING);
     http_response_code(400);
     echo json_encode(['error' => 'Invalid rfid_hash (must be SHA-256 hex, 64 chars)']);
     exit;
 }
 if ($kwh < 0) {
-    dol_syslog('wallboxbilling receive: negative kwh='.$kwh, LOG_WARNING);
     http_response_code(400);
     echo json_encode(['error' => 'kwh must be >= 0']);
     exit;
 }
 if (!$startTs || !$endTs || $endTs <= $startTs) {
-    dol_syslog('wallboxbilling receive: bad timestamps start='.$data['start_time'].' end='.$data['end_time'], LOG_WARNING);
     http_response_code(400);
     echo json_encode(['error' => 'Invalid or illogical timestamps']);
     exit;
 }
 
-// Duplikatsprüfung
-$sqlCheck = "SELECT rowid FROM ".MAIN_DB_PREFIX."wallbox_sessions"
-          ." WHERE rfid_hash = '".$db->escape($rfidHash)."'"
-          ." AND start_time = '".$db->idate($startTs)."'"
-          ." AND end_time = '".$db->idate($endTs)."'";
-$resCheck = $db->query($sqlCheck);
-if ($resCheck && $db->num_rows($resCheck) > 0) {
-    echo json_encode(['success' => false, 'message' => 'Session already exists']);
+// ===== RFID → fk_user (mit Entity-Fallback) =====
+$fkUser = 0;
+$userPrice = null;
+$resUser = $db->query("SELECT fk_user, price_kwh FROM ".MAIN_DB_PREFIX."wallbox_rfid"
+    ." WHERE rfid_hash = '".$db->escape($rfidHash)."' AND entity = ".(int)$conf->entity);
+if ($resUser && ($obj = $db->fetch_object($resUser))) {
+    $fkUser    = (int) $obj->fk_user;
+    $userPrice = $obj->price_kwh;
+}
+if ($fkUser <= 0) {
+    $resUser2 = $db->query("SELECT fk_user, price_kwh FROM ".MAIN_DB_PREFIX."wallbox_rfid"
+        ." WHERE rfid_hash = '".$db->escape($rfidHash)."' LIMIT 1");
+    if ($resUser2 && ($obj = $db->fetch_object($resUser2))) {
+        $fkUser    = (int) $obj->fk_user;
+        $userPrice = $obj->price_kwh;
+    }
+}
+if ($fkUser <= 0) {
+    // RFID unbekannt — Admin muss erst mappen. HA-Addon retried beim nächsten Lauf.
+    dol_syslog('wallboxbilling receive: RFID unbekannt hash='.substr($rfidHash, 0, 16).'... — Mapping fehlt', LOG_WARNING);
+    http_response_code(422);
+    echo json_encode([
+        'success' => false,
+        'error'   => 'RFID nicht zugeordnet (Hash-Prefix '.substr($rfidHash, 0, 16).'...). Admin muss RFID einem Benutzer zuordnen unter Wallbox-Abrechnung Konfiguration.',
+        'code'    => 'RFID_NOT_MAPPED',
+    ]);
     exit;
 }
 
-// RFID-Hash → fk_user auflösen — zuerst in aktueller Entity, dann ohne Filter
-$fkUser = 0;
-$resUser = $db->query("SELECT fk_user FROM ".MAIN_DB_PREFIX."wallbox_rfid"
-    ." WHERE rfid_hash = '".$db->escape($rfidHash)."' AND entity = ".(int)$conf->entity);
-if ($resUser && ($obj = $db->fetch_object($resUser))) {
-    $fkUser = (int) $obj->fk_user;
-}
-if ($fkUser <= 0) {
-    // Fallback ohne Entity-Filter (NOLOGIN-Kontext kann andere Default-Entity haben)
-    $resUser2 = $db->query("SELECT fk_user FROM ".MAIN_DB_PREFIX."wallbox_rfid"
-        ." WHERE rfid_hash = '".$db->escape($rfidHash)."' LIMIT 1");
-    if ($resUser2 && ($obj = $db->fetch_object($resUser2))) {
-        $fkUser = (int) $obj->fk_user;
-        dol_syslog('wallboxbilling receive: fk_user via entity-fallback aufgelöst → '.$fkUser, LOG_INFO);
+// Effektiven Preis bestimmen: user-spezifisch oder Default
+$defaultPrice = (float) getDolGlobalString('WALLBOXBILLING_DEFAULT_PRICE', '0.30');
+$effPrice     = !empty($userPrice) ? (float) $userPrice : $defaultPrice;
+
+// ===== Spesentyp TK_ELE sicherstellen =====
+// llx_c_type_fees verwendet `id` als PK (nicht rowid)
+$typeId = 0;
+$resType = $db->query("SELECT id, active FROM ".MAIN_DB_PREFIX."c_type_fees WHERE code = 'TK_ELE'");
+if ($resType && ($obj = $db->fetch_object($resType))) {
+    $typeId = (int) $obj->id;
+    if ((int) $obj->active !== 1) {
+        $db->query("UPDATE ".MAIN_DB_PREFIX."c_type_fees SET active = 1 WHERE id = ".$typeId);
     }
+} else {
+    $db->query("INSERT INTO ".MAIN_DB_PREFIX."c_type_fees (code, label, active)"
+             ." VALUES ('TK_ELE', 'Stromkosten (Wallbox)', 1)");
+    $typeId = (int) $db->last_insert_id(MAIN_DB_PREFIX."c_type_fees");
+}
+if ($typeId <= 0) {
+    dol_syslog('wallboxbilling receive: TK_ELE konnte nicht angelegt werden: '.$db->lasterror(), LOG_ERR);
+    http_response_code(500);
+    echo json_encode(['error' => 'Spesentyp TK_ELE konnte nicht angelegt werden: '.$db->lasterror()]);
+    exit;
 }
 
-// Session einfügen
-$now = $db->idate(dol_now());
-$sqlIns = "INSERT INTO ".MAIN_DB_PREFIX."wallbox_sessions"
-        ." (fk_user, rfid_hash, wallbox_id, start_time, end_time,"
-        ."  kwh, price_per_kwh, total_cost, status, date_creation, transmitted_at)"
+// ===== Spesenabrechnung für Session-Monat finden oder anlegen =====
+// Monat aus start_time der Session (nicht "heute"), damit Sessions vom Vormonat
+// in der korrekten Abrechnung landen wenn sie verspätet ankommen.
+$sessionYear  = (int) date('Y', $startTs);
+$sessionMonth = (int) date('n', $startTs);
+$lastDay      = (int) date('t', mktime(0, 0, 0, $sessionMonth, 1, $sessionYear));
+$periodStart  = sprintf('%04d-%02d-01 00:00:00', $sessionYear, $sessionMonth);
+$periodEnd    = sprintf('%04d-%02d-%02d 23:59:59', $sessionYear, $sessionMonth, $lastDay);
+
+$reportId = 0;
+$sqlFind = "SELECT rowid FROM ".MAIN_DB_PREFIX."expensereport"
+         ." WHERE fk_user_author = ".$fkUser
+         ." AND fk_statut = 0"
+         ." AND date_debut <= '".$periodEnd."'"
+         ." AND date_fin   >= '".$periodStart."'"
+         ." ORDER BY rowid ASC LIMIT 1";
+$resFind = $db->query($sqlFind);
+if ($resFind && ($obj = $db->fetch_object($resFind))) {
+    $reportId = (int) $obj->rowid;
+    dol_syslog('wallboxbilling receive: bestehende Draft-Spesenabrechnung #'.$reportId.' für User '.$fkUser.' verwendet', LOG_INFO);
+}
+
+if ($reportId <= 0) {
+    // Neue Draft-Spesenabrechnung anlegen
+    require_once DOL_DOCUMENT_ROOT.'/expensereport/class/expensereport.class.php';
+    $apiUser = new User($db);
+    $apiUser->fetch($apiUserId);
+
+    $er = new ExpenseReport($db);
+    $er->fk_user_author = $fkUser;
+    $er->fk_user_valid  = $apiUserId;
+    $er->date_debut     = dol_mktime(0,  0,  0, $sessionMonth, 1,       $sessionYear);
+    $er->date_fin       = dol_mktime(23, 59, 59, $sessionMonth, $lastDay, $sessionYear);
+    $er->status         = ExpenseReport::STATUS_DRAFT;
+    $er->entity         = (int) $conf->entity;
+
+    $reportId = (int) $er->create($apiUser);
+    if ($reportId <= 0) {
+        dol_syslog('wallboxbilling receive: Spesenabrechnung-Anlage fehlgeschlagen für User '.$fkUser.': '.$er->error, LOG_ERR);
+        http_response_code(500);
+        echo json_encode(['error' => 'Spesenabrechnung konnte nicht angelegt werden: '.$er->error]);
+        exit;
+    }
+    dol_syslog('wallboxbilling receive: neue Draft-Spesenabrechnung #'.$reportId.' für User '.$fkUser.' angelegt', LOG_INFO);
+}
+
+// ===== Duplikat-Check via Marker in comments =====
+// Marker: [wbx:RFID_PREFIX:START_UNIX] — eindeutig pro Session
+$marker  = '[wbx:'.substr($rfidHash, 0, 16).':'.$startTs.']';
+$sqlDup  = "SELECT rowid FROM ".MAIN_DB_PREFIX."expensereport_det"
+         ." WHERE fk_expensereport = ".$reportId
+         ." AND comments LIKE '%".$db->escape($marker)."%'";
+$resDup = $db->query($sqlDup);
+if ($resDup && $db->num_rows($resDup) > 0) {
+    echo json_encode([
+        'success'   => true,
+        'duplicate' => true,
+        'report_id' => $reportId,
+        'message'   => 'Session bereits in Abrechnung enthalten',
+    ]);
+    exit;
+}
+
+// ===== Zeile in Spesenabrechnung einfügen =====
+$qty       = round($kwh, 3);
+$unitPrice = $effPrice;
+$total     = round($qty * $unitPrice, 2);
+$comment   = $db->escape(
+    trim($wallboxId).' '.date('d.m.Y H:i', $startTs).' '.$marker
+);
+$sqlIns = "INSERT INTO ".MAIN_DB_PREFIX."expensereport_det"
+        ." (fk_expensereport, fk_c_type_fees, comments, qty, value_unit,"
+        ."  total_ht, tva_tx, total_tva, total_ttc, date, fk_projet)"
         ." VALUES ("
-        .$fkUser.", '".$db->escape($rfidHash)."', '".$db->escape($wallboxId)."',"
-        ." '".$db->idate($startTs)."', '".$db->idate($endTs)."',"
-        ." ".round($kwh, 3).", 0.30, 0.00, 'completed', '".$now."', '".$now."')";
+        .$reportId.", ".$typeId.", '".$comment."', ".$qty.", ".$unitPrice.","
+        ." ".$total.", 0, 0, ".$total.","
+        ." '".$db->idate($startTs)."', 0)";
 
 if (!$db->query($sqlIns)) {
+    dol_syslog('wallboxbilling receive: INSERT expensereport_det failed: '.$db->lasterror().' | SQL: '.$sqlIns, LOG_ERR);
     http_response_code(500);
     echo json_encode(['error' => 'DB error: '.$db->lasterror()]);
     exit;
 }
 
-$id = (int) $db->last_insert_id(MAIN_DB_PREFIX.'wallbox_sessions');
-dol_syslog('wallboxbilling receive: session #'.$id.' imported, kwh='.round($kwh, 3), LOG_INFO);
+$lineId = (int) $db->last_insert_id(MAIN_DB_PREFIX.'expensereport_det');
 
-echo json_encode(['success' => true, 'id' => $id, 'message' => 'Session stored']);
+// Spesenabrechnungs-Summen aktualisieren
+$db->query("UPDATE ".MAIN_DB_PREFIX."expensereport er"
+    ." SET er.total_ht  = (SELECT COALESCE(SUM(d.total_ht),  0) FROM ".MAIN_DB_PREFIX."expensereport_det d WHERE d.fk_expensereport = ".$reportId."),"
+    ."     er.total_ttc = (SELECT COALESCE(SUM(d.total_ttc), 0) FROM ".MAIN_DB_PREFIX."expensereport_det d WHERE d.fk_expensereport = ".$reportId.")"
+    ." WHERE er.rowid = ".$reportId);
+
+dol_syslog('wallboxbilling receive: Zeile #'.$lineId.' (kwh='.$qty.', total='.$total.') in Spesenabrechnung #'.$reportId.' für User '.$fkUser.' eingefügt', LOG_INFO);
+
+echo json_encode([
+    'success'      => true,
+    'report_id'    => $reportId,
+    'line_id'      => $lineId,
+    'fk_user'      => $fkUser,
+    'kwh'          => $qty,
+    'unit_price'   => $unitPrice,
+    'total'        => $total,
+    'message'      => 'Session in Spesenabrechnung eingetragen',
+]);

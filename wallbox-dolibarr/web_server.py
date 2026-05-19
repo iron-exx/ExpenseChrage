@@ -420,9 +420,13 @@ def create_app(session_manager, config, api_state):
             writer.writerow([date_s, time_s, rfid_s, wbx_s, kwh_s, status, tx_time])
 
         filename = f'wallbox_{year}_{str(month).zfill(2)}.csv'
+        # aiohttp content_type darf KEINE Parameter (z.B. charset) enthalten —
+        # sonst ValueError → 500. Mit BOM für korrekte Umlaut-Darstellung in Excel.
+        body = '﻿' + output.getvalue()
         return web.Response(
-            text=output.getvalue(),
-            content_type='text/csv; charset=utf-8',
+            body=body.encode('utf-8'),
+            content_type='text/csv',
+            charset='utf-8',
             headers={'Content-Disposition': f'attachment; filename="{filename}"'}
         )
 

@@ -64,14 +64,6 @@ if ($resql_cols) {
     }
 }
 
-// --- Auto-Heal: fk_user in wallbox_sessions aus wallbox_rfid nachtragen ---
-// Bestehende Sessions mit fk_user=0 die ein gültiges RFID-Mapping haben,
-// werden nachträglich verknüpft — sonst werden sie von der Abrechnung übersprungen.
-$db->query("UPDATE ".MAIN_DB_PREFIX."wallbox_sessions s"
-    ." INNER JOIN ".MAIN_DB_PREFIX."wallbox_rfid r ON r.rfid_hash = s.rfid_hash"
-    ." SET s.fk_user = r.fk_user"
-    ." WHERE (s.fk_user = 0 OR s.fk_user IS NULL) AND r.fk_user > 0");
-
 $action = GETPOST('action', 'aZ09');
 
 // --- CSRF-Token manuell prüfen (ohne checkToken() — Dolibarr-versionsunabhängig) ---
@@ -79,10 +71,7 @@ $submitted_token = GETPOST('token', 'alpha');
 $token_ok = (empty($_SESSION['newtoken']) || $submitted_token === $_SESSION['newtoken']);
 
 // --- Aktionen verarbeiten ---
-$save_error      = '';
-$billing_results = array();
-$billing_info    = '';
-$billing_error   = '';
+$save_error = '';
 try {
     if ($action === 'update' && !empty($submitted_token) && $token_ok) {
         $price = price2num(GETPOST('WALLBOXBILLING_DEFAULT_PRICE', 'alpha'));
@@ -123,39 +112,9 @@ try {
             setEventMessages($langs->trans('RFIDHashSaved'), null, 'mesgs');
         }
     }
-    if ($action === 'run_billing' && !empty($submitted_token) && $token_ok) {
-        require_once __DIR__.'/../class/billing.class.php';
-        $billingMonth = (int) GETPOST('billing_month', 'int');
-        $billingYear  = (int) GETPOST('billing_year', 'int');
-        $cron   = new WallboxBillingCron($db);
-        $result = $cron->runMonthlyBilling($user, $billingMonth, $billingYear);
-        if ($result === -1) {
-            $billing_error = $cron->error;
-        } elseif (is_array($result) && empty($result)) {
-            $billing_info = 'Keine abgeschlossenen Sessions im gewählten Zeitraum gefunden.';
-        } elseif (is_array($result)) {
-            $billing_results = $result;
-        }
-        // Zeilen-Insert-Fehler einsammeln (z.B. Schema-Probleme)
-        if (!empty($cron->errors)) {
-            $billing_error = implode(' | ', $cron->errors);
-        }
-    }
-
-    if ($action === 'insert_test_session' && !empty($submitted_token) && $token_ok) {
-        $now   = $db->idate(dol_now());
-        $start = $db->idate(dol_now() - 3600);
-        $sqlT  = "INSERT INTO ".MAIN_DB_PREFIX."wallbox_sessions"
-               . " (fk_user, rfid_hash, wallbox_id, start_time, end_time, kwh,"
-               . "  price_per_kwh, total_cost, status, date_creation, transmitted_at)"
-               . " VALUES (".(int)$user->id.", '0000000000000000000000000000000000000000000000000000000000000000',"
-               . " 'test_wallbox', '".$start."', '".$now."', 5.0, 0.30, 1.50, 'completed', '".$now."', '".$now."')";
-        if ($db->query($sqlT)) {
-            setEventMessages('Test-Session eingefügt (ID: '.(int)$db->last_insert_id(MAIN_DB_PREFIX.'wallbox_sessions').'). Jetzt Ladevorgänge öffnen.', null, 'mesgs');
-        } else {
-            setEventMessages('Fehler: '.$db->lasterror(), null, 'errors');
-        }
-    }
+    // Test-Abrechnung und Diagnose-Test-Session entfernt in 1.1.0 —
+    // Sessions werden jetzt vom HA-Addon direkt in die Spesenabrechnung
+    // geschrieben, kein manueller Anstoß mehr nötig.
 
     if ($action === 'uninstall_module' && !empty($submitted_token) && $token_ok) {
         $confirm = GETPOST('confirm_uninstall', 'alpha');
@@ -275,78 +234,15 @@ if ($resql) {
 }
 print '</table>';
 
-// --- Test-Abrechnung ---
+// Hinweis-Box: Erklärung der neuen Architektur
 print '<br>';
-print load_fiche_titre('Test-Abrechnung');
-
-// Ergebnis-Anzeige
-if (!empty($billing_error)) {
-    print '<div class="error">'.dol_escape_htmltag($billing_error).'</div><br>';
-}
-if (!empty($billing_info)) {
-    print '<div class="warning">'.dol_escape_htmltag($billing_info).'</div><br>';
-}
-if (!empty($billing_results)) {
-    print '<div class="ok">';
-    print '<b>Abrechnung erfolgreich:</b> '.count($billing_results).' Benutzer abgerechnet<br>';
-    print '<ul style="margin:6px 0 0 18px">';
-    foreach ($billing_results as $r) {
-        print '<li>User #'.(int)$r['user_id'].': Report #'.(int)$r['report_id']
-            .' &mdash; <b>'.(int)$r['added'].' neue Zeilen</b>'
-            .' ('.(int)$r['sessions'].' Sessions gesamt)</li>';
-    }
-    print '</ul></div><br>';
-}
-
-// Standard-Vormonat berechnen
-$defMonth = (int)date('n') - 1;
-$defYear  = (int)date('Y');
-if ($defMonth == 0) { $defMonth = 12; $defYear--; }
-
-print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'">';
-print '<input type="hidden" name="token" value="'.$token.'">';
-print '<input type="hidden" name="action" value="run_billing">';
-print '<table class="noborder" style="width:auto">';
-print '<tr>';
-
-// Monat-Auswahl
-print '<td style="padding-right:10px"><label>'.$langs->trans('Month').'</label>';
-print '<select name="billing_month" class="flat">';
-$monthNames = array(1=>'Januar',2=>'Februar',3=>'März',4=>'April',5=>'Mai',
-                    6=>'Juni',7=>'Juli',8=>'August',9=>'September',
-                    10=>'Oktober',11=>'November',12=>'Dezember');
-foreach ($monthNames as $m => $mname) {
-    $sel = ($m == $defMonth) ? ' selected' : '';
-    print '<option value="'.$m.'"'.$sel.'>'.$mname.'</option>';
-}
-print '</select></td>';
-
-// Jahr-Auswahl
-print '<td style="padding-right:10px"><label>'.$langs->trans('Year').'</label>';
-print '<select name="billing_year" class="flat">';
-for ($y = (int)date('Y'); $y >= (int)date('Y') - 3; $y--) {
-    $sel = ($y == $defYear) ? ' selected' : '';
-    print '<option value="'.$y.'"'.$sel.'>'.$y.'</option>';
-}
-print '</select></td>';
-
-print '<td style="vertical-align:bottom">';
-print '<input type="submit" class="button" value="Abrechnung jetzt ausführen">';
-print '</td>';
-print '</tr>';
-print '</table>';
-print '</form>';
-
-// --- Diagnose: Test-Session ---
-print '<br>';
-print load_fiche_titre('Diagnose');
-print '<p style="color:#666">Eine Test-Session direkt in die Datenbank einfügen — prüft ob die DB-Seite funktioniert.</p>';
-print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'">';
-print '<input type="hidden" name="token" value="'.$token.'">';
-print '<input type="hidden" name="action" value="insert_test_session">';
-print '<input type="submit" class="button smallpaddingimp" value="Test-Session einfügen" onclick="return confirm(\'Test-Session (5 kWh) einfügen?\');">';
-print ' <span class="opacitymedium small">→ danach &quot;Ladevorgänge&quot; prüfen</span>';
-print '</form>';
+print '<div class="info" style="padding:10px">';
+print '<b>Ablauf ab 1.1.0:</b> Sobald das HA-Addon einen Ladevorgang überträgt, '
+    .'wird er automatisch in die Spesenabrechnung des Mitarbeiters für den '
+    .'jeweiligen Monat eingetragen. Existiert für den Monat noch keine Abrechnung, '
+    .'wird ein neuer Entwurf angelegt. Voraussetzung: die RFID-Karte muss oben '
+    .'einem Benutzer zugeordnet sein.';
+print '</div>';
 
 // --- Modul deinstallieren ---
 print '<br>';

@@ -1,2 +1,0 @@
--- Indexes sind direkt in llx_wallbox_sessions.sql (CREATE TABLE IF NOT EXISTS) definiert.
--- Diese Datei bleibt leer um Dolibarr-Kompatibilität zu gewährleisten.
