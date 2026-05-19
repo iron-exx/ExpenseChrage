@@ -79,7 +79,7 @@ try {
         setEventMessages($langs->trans('SetupSaved'), null, 'mesgs');
     }
 
-    // RFID-Tag zu User HINZUFÜGEN (ein User kann mehrere Tags haben)
+    // RFID-Tag zu User HINZUFÜGEN — reaktiviert deaktivierte Karte desselben Users
     if ($action === 'add_rfid' && !empty($submitted_token) && $token_ok) {
         $user_id  = GETPOST('user_id', 'int');
         $rfid_hex = trim(GETPOST('rfid_hex', 'alpha'));
@@ -87,17 +87,30 @@ try {
         if ($user_id > 0 && !empty($rfid_hex)) {
             $rfid_hash = hash('sha256', strtoupper($rfid_hex));
 
-            // Prüfen ob dieser Hash bereits einem User gehört (UNIQUE-Constraint)
-            $resExist = $db->query("SELECT fk_user FROM ".MAIN_DB_PREFIX."wallbox_rfid"
+            // Existiert dieser Hash bereits? (egal ob active oder inactive)
+            $resExist = $db->query("SELECT rowid, fk_user, active FROM ".MAIN_DB_PREFIX."wallbox_rfid"
                 ." WHERE rfid_hash = '".$db->escape($rfid_hash)."'");
             if ($resExist && ($oExist = $db->fetch_object($resExist))) {
                 if ((int) $oExist->fk_user === (int) $user_id) {
-                    setEventMessages('Dieser RFID-Tag ist bereits diesem Benutzer zugeordnet.', null, 'warnings');
+                    if ((int) $oExist->active === 1) {
+                        setEventMessages('Diese Karte ist bereits aktiv zugeordnet.', null, 'warnings');
+                    } else {
+                        // Reaktivieren — Karte gehörte schon diesem User
+                        $db->query("UPDATE ".MAIN_DB_PREFIX."wallbox_rfid SET active = 1"
+                            ." WHERE rowid = ".(int)$oExist->rowid);
+                        dol_syslog('wallboxbilling: RFID reaktiviert user='.$user_id.' hash='.substr($rfid_hash, 0, 16).'...', LOG_INFO);
+                        setEventMessages('Karte '.dol_escape_htmltag(strtoupper($rfid_hex)).' reaktiviert.', null, 'mesgs');
+                    }
                 } else {
-                    setEventMessages('Dieser RFID-Tag ist bereits einem anderen Benutzer (#'.(int)$oExist->fk_user.') zugeordnet.', null, 'errors');
+                    // Hash gehört einem ANDEREN User — Aufbewahrungspflicht: nie überschreiben
+                    setEventMessages(
+                        'Diese Karte ist bereits Benutzer #'.(int)$oExist->fk_user
+                        .' zugeordnet ('.((int)$oExist->active === 1 ? 'aktiv' : 'deaktiviert')
+                        .'). Wegen Aufbewahrungspflicht (10 Jahre) kann das Mapping nicht überschrieben werden.',
+                        null, 'errors'
+                    );
                 }
             } else {
-                // Aktuellen User-Preis übernehmen (vom ersten existierenden Tag) oder Default
                 $defPrice = getDolGlobalString('WALLBOXBILLING_DEFAULT_PRICE', '0.30');
                 $resPrice = $db->query("SELECT price_kwh FROM ".MAIN_DB_PREFIX."wallbox_rfid"
                     ." WHERE fk_user = ".(int)$user_id." AND entity = ".(int)$conf->entity
@@ -116,7 +129,7 @@ try {
                     .", '".$db->idate(dol_now())."')";
                 if ($db->query($sql)) {
                     dol_syslog('wallboxbilling: RFID hinzugefügt user='.$user_id.' hash='.substr($rfid_hash, 0, 16).'...', LOG_INFO);
-                    setEventMessages('RFID-Tag '.dol_escape_htmltag(strtoupper($rfid_hex)).' hinzugefügt.', null, 'mesgs');
+                    setEventMessages('Karte '.dol_escape_htmltag(strtoupper($rfid_hex)).' hinzugefügt.', null, 'mesgs');
                 } else {
                     setEventMessages($db->lasterror(), null, 'errors');
                 }
@@ -124,26 +137,44 @@ try {
         }
     }
 
-    // Einzelnen RFID-Tag LÖSCHEN
+    // Einzelnen RFID-Tag DEAKTIVIEREN (Soft-Delete) — Mapping bleibt für
+    // Steuerprüfung erhalten (10 Jahre Aufbewahrungspflicht §147 AO).
     if ($action === 'delete_rfid' && !empty($submitted_token) && $token_ok) {
         $rfid_id = GETPOST('rfid_id', 'int');
         if ($rfid_id > 0) {
-            if ($db->query("DELETE FROM ".MAIN_DB_PREFIX."wallbox_rfid WHERE rowid = ".(int)$rfid_id." AND entity = ".(int)$conf->entity)) {
-                setEventMessages('RFID-Tag gelöscht.', null, 'mesgs');
+            if ($db->query("UPDATE ".MAIN_DB_PREFIX."wallbox_rfid SET active = 0"
+                ." WHERE rowid = ".(int)$rfid_id." AND entity = ".(int)$conf->entity)) {
+                dol_syslog('wallboxbilling: RFID deaktiviert rowid='.$rfid_id, LOG_INFO);
+                setEventMessages('Karte deaktiviert (Mapping bleibt für Aufbewahrungspflicht erhalten).', null, 'mesgs');
             } else {
                 setEventMessages($db->lasterror(), null, 'errors');
             }
         }
     }
 
-    // Preis-pro-kWh für ALLE Tags eines Users aktualisieren
+    // Deaktivierte Karte REAKTIVIEREN
+    if ($action === 'reactivate_rfid' && !empty($submitted_token) && $token_ok) {
+        $rfid_id = GETPOST('rfid_id', 'int');
+        if ($rfid_id > 0) {
+            if ($db->query("UPDATE ".MAIN_DB_PREFIX."wallbox_rfid SET active = 1"
+                ." WHERE rowid = ".(int)$rfid_id." AND entity = ".(int)$conf->entity)) {
+                setEventMessages('Karte reaktiviert.', null, 'mesgs');
+            } else {
+                setEventMessages($db->lasterror(), null, 'errors');
+            }
+        }
+    }
+
+    // Preis-pro-kWh für ALLE AKTIVEN Tags eines Users aktualisieren —
+    // historische (deaktivierte) Mappings bleiben unverändert.
     if ($action === 'update_price' && !empty($submitted_token) && $token_ok) {
         $user_id = GETPOST('user_id', 'int');
         $price   = price2num(GETPOST('price_kwh', 'alpha'));
         if ($user_id > 0) {
             if ($db->query("UPDATE ".MAIN_DB_PREFIX."wallbox_rfid"
                 ." SET price_kwh = ".(float)$price
-                ." WHERE fk_user = ".(int)$user_id." AND entity = ".(int)$conf->entity)) {
+                ." WHERE fk_user = ".(int)$user_id." AND entity = ".(int)$conf->entity
+                ." AND active = 1")) {
                 setEventMessages('Preis aktualisiert.', null, 'mesgs');
             } else {
                 setEventMessages($db->lasterror(), null, 'errors');
@@ -157,34 +188,36 @@ try {
     if ($action === 'uninstall_module' && !empty($submitted_token) && $token_ok) {
         $confirm = GETPOST('confirm_uninstall', 'alpha');
         if ($confirm !== 'JA') {
-            setEventMessages('Bitte "JA" eingeben um die Deinstallation zu bestätigen.', null, 'warnings');
+            setEventMessages('Bitte "JA" eingeben um die Deaktivierung zu bestätigen.', null, 'warnings');
         } else {
             $db->begin();
             $err = 0;
 
-            // Tabellen löschen
-            foreach (array('wallbox_sessions', 'wallbox_rfid') as $tbl) {
-                if (!$db->query("DROP TABLE IF EXISTS ".MAIN_DB_PREFIX.$tbl)) {
-                    $err++;
-                    setEventMessages('DROP TABLE '.$tbl.': '.$db->lasterror(), null, 'errors');
-                }
-            }
-
-            // Modul-Konstanten entfernen
-            if (!$db->query("DELETE FROM ".MAIN_DB_PREFIX."const WHERE name LIKE 'WALLBOXBILLING_%' AND entity = ".(int)$conf->entity)) {
+            // WICHTIG: llx_wallbox_rfid wird NICHT gedroppt — Steuerprüfungs-
+            // Aufbewahrungspflicht (§147 AO, 10 Jahre). Das Mapping muss
+            // nachvollziehbar bleiben welche Karte zu welchem Mitarbeiter
+            // gehörte. Stattdessen werden alle Tags soft-deaktiviert.
+            if (!$db->query("UPDATE ".MAIN_DB_PREFIX."wallbox_rfid SET active = 0"
+                ." WHERE entity = ".(int)$conf->entity)) {
                 $err++;
-                setEventMessages('DELETE const: '.$db->lasterror(), null, 'errors');
+                setEventMessages('Deaktivierung wallbox_rfid: '.$db->lasterror(), null, 'errors');
             }
 
-            // Modul-Aktivierung deaktivieren
+            // Modul-Konstanten entfernen (sind nicht aufbewahrungspflichtig)
+            $db->query("DELETE FROM ".MAIN_DB_PREFIX."const WHERE name LIKE 'WALLBOXBILLING_%' AND entity = ".(int)$conf->entity);
+
+            // Modul-Aktivierung entfernen
             $db->query("DELETE FROM ".MAIN_DB_PREFIX."const WHERE name = 'MAIN_MODULE_WALLBOXBILLING' AND entity = ".(int)$conf->entity);
 
-            // TK_ELE Spesentyp entfernen (nur wenn von diesem Modul angelegt)
-            $db->query("DELETE FROM ".MAIN_DB_PREFIX."c_type_fees WHERE code = 'TK_ELE'");
+            // TK_ELE bleibt — könnte in alten Spesenabrechnungen referenziert sein
 
             if ($err === 0) {
                 $db->commit();
-                setEventMessages('Modul-Daten erfolgreich gelöscht. Bitte PHP-Dateien manuell vom Server unter custom/wallboxbilling/ entfernen.', null, 'mesgs');
+                setEventMessages(
+                    'Modul deaktiviert. Aufbewahrungspflichtige Daten (RFID-Mapping, Spesenabrechnungen, TK_ELE) bleiben erhalten. '
+                    .'PHP-Dateien unter custom/wallboxbilling/ können manuell entfernt werden.',
+                    null, 'mesgs'
+                );
             } else {
                 $db->rollback();
             }
@@ -238,12 +271,12 @@ $sqlUsers = "SELECT rowid, login, lastname, firstname"
           ." ORDER BY login";
 $resUsers = $db->query($sqlUsers);
 
-// RFID-Tags pro User vorladen — eine Query statt N
+// RFID-Tags pro User vorladen — getrennt nach aktiv/inaktiv
 $tagsByUser = array();
-$resTags = $db->query("SELECT rowid, fk_user, rfid_hash, label, price_kwh"
+$resTags = $db->query("SELECT rowid, fk_user, rfid_hash, label, price_kwh, active"
     ." FROM ".MAIN_DB_PREFIX."wallbox_rfid"
     ." WHERE entity = ".(int)$conf->entity
-    ." ORDER BY fk_user, rowid");
+    ." ORDER BY fk_user, active DESC, rowid");
 if ($resTags) {
     while ($t = $db->fetch_object($resTags)) {
         $tagsByUser[(int)$t->fk_user][] = $t;
@@ -263,22 +296,24 @@ print '</tr>';
 if ($resUsers) {
     while ($u = $db->fetch_object($resUsers)) {
         $uid       = (int) $u->rowid;
-        $userTags  = isset($tagsByUser[$uid]) ? $tagsByUser[$uid] : array();
-        $userPrice = !empty($userTags) && !empty($userTags[0]->price_kwh)
-            ? price2num($userTags[0]->price_kwh) : $defaultPrice;
+        $allTags   = isset($tagsByUser[$uid]) ? $tagsByUser[$uid] : array();
+        $activeTags   = array_filter($allTags, function($t) { return (int)$t->active === 1; });
+        $inactiveTags = array_filter($allTags, function($t) { return (int)$t->active !== 1; });
+        $userPrice = !empty($activeTags) && !empty(reset($activeTags)->price_kwh)
+            ? price2num(reset($activeTags)->price_kwh) : $defaultPrice;
 
         print '<tr class="oddeven">';
         // Spalte 1: Benutzer
         print '<td style="vertical-align:top;padding-top:8px"><b>'.dol_escape_htmltag($u->login).'</b><br>';
         print '<span class="opacitymedium small">'.dol_escape_htmltag(trim($u->firstname.' '.$u->lastname)).'</span></td>';
 
-        // Spalte 2: RFID-Tags + Add-Form
+        // Spalte 2: aktive Karten + Add-Form + (Toggle) inaktive Karten
         print '<td style="vertical-align:top">';
-        if (empty($userTags)) {
-            print '<span class="opacitymedium small">— keine Karten zugeordnet —</span><br>';
+        if (empty($activeTags)) {
+            print '<span class="opacitymedium small">— keine aktiven Karten —</span><br>';
         } else {
-            foreach ($userTags as $t) {
-                print '<div style="margin-bottom:4px;padding:4px 8px;background:#f8f8f8;border-radius:3px;display:inline-block;margin-right:6px">';
+            foreach ($activeTags as $t) {
+                print '<div style="margin-bottom:4px;padding:4px 8px;background:#eaf6ea;border-radius:3px;display:inline-block;margin-right:6px">';
                 print '<code>'.dol_escape_htmltag((string)$t->label).'</code>';
                 print ' <span class="opacitymedium small" title="'.dol_escape_htmltag($t->rfid_hash).'">('.substr($t->rfid_hash, 0, 12).'…)</span>';
                 print ' <form method="POST" action="'.$_SERVER['PHP_SELF'].'" style="display:inline;margin-left:6px">';
@@ -286,7 +321,8 @@ if ($resUsers) {
                 print '<input type="hidden" name="action" value="delete_rfid">';
                 print '<input type="hidden" name="rfid_id" value="'.(int)$t->rowid.'">';
                 print '<button type="submit" class="button smallpaddingimp" style="padding:1px 6px;color:#c00"'
-                    .' onclick="return confirm(\'Karte '.dol_escape_js($t->label).' wirklich löschen?\');" title="Löschen">×</button>';
+                    .' onclick="return confirm(\'Karte '.dol_escape_js($t->label).' deaktivieren? Das Mapping bleibt für Aufbewahrungspflicht erhalten.\');"'
+                    .' title="Deaktivieren (Soft-Delete)">×</button>';
                 print '</form>';
                 print '</div>';
             }
@@ -300,11 +336,33 @@ if ($resUsers) {
         print '<input type="text" name="rfid_hex" class="flat" size="14" placeholder="EFCD083E" style="text-transform:uppercase">';
         print ' <input type="submit" class="button smallpaddingimp" value="+ Karte hinzufügen">';
         print '</form>';
+
+        // Deaktivierte (Historie): ausklappbar
+        if (!empty($inactiveTags)) {
+            $detailsId = 'inactive_'.$uid;
+            print '<div style="margin-top:6px">';
+            print '<details><summary class="opacitymedium small" style="cursor:pointer">'
+                .'Historie: '.count($inactiveTags).' deaktivierte Karte(n)</summary>';
+            print '<div style="margin-top:4px">';
+            foreach ($inactiveTags as $t) {
+                print '<div style="margin-bottom:4px;padding:4px 8px;background:#f3f3f3;border-radius:3px;display:inline-block;margin-right:6px;color:#888">';
+                print '<code style="text-decoration:line-through">'.dol_escape_htmltag((string)$t->label).'</code>';
+                print ' <span class="opacitymedium small">('.substr($t->rfid_hash, 0, 12).'…)</span>';
+                print ' <form method="POST" action="'.$_SERVER['PHP_SELF'].'" style="display:inline;margin-left:6px">';
+                print '<input type="hidden" name="token" value="'.$token.'">';
+                print '<input type="hidden" name="action" value="reactivate_rfid">';
+                print '<input type="hidden" name="rfid_id" value="'.(int)$t->rowid.'">';
+                print '<button type="submit" class="button smallpaddingimp" style="padding:1px 6px" title="Reaktivieren">↻</button>';
+                print '</form>';
+                print '</div>';
+            }
+            print '</div></details></div>';
+        }
         print '</td>';
 
         // Spalte 3: Preis
         print '<td style="vertical-align:top">';
-        if (!empty($userTags)) {
+        if (!empty($activeTags)) {
             print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'" style="display:inline">';
             print '<input type="hidden" name="token" value="'.$token.'">';
             print '<input type="hidden" name="action" value="update_price">';
@@ -323,9 +381,14 @@ if ($resUsers) {
 }
 print '</table>';
 
-// --- Modul deinstallieren ---
+// --- Modul deaktivieren ---
 print '<br>';
-print load_fiche_titre('Modul deinstallieren');
+print load_fiche_titre('Modul deaktivieren');
+print '<p class="opacitymedium small" style="margin:0 0 10px 0">'
+    .'Alle aktiven RFID-Karten werden deaktiviert, Modulkonstanten und Aktivierung werden entfernt. '
+    .'<b>Das RFID→User-Mapping bleibt aus Aufbewahrungsgründen (§147 AO, 10 Jahre) erhalten.</b> '
+    .'Spesenabrechnungen und TK_ELE werden nicht angetastet.'
+    .'</p>';
 print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'">';
 print '<input type="hidden" name="token" value="'.$token.'">';
 print '<input type="hidden" name="action" value="uninstall_module">';
@@ -336,8 +399,8 @@ print ' style="border:2px solid #e05353;font-weight:bold;text-transform:uppercas
 print ' <span class="opacitymedium small">→ Tippe <b>JA</b> um zu bestätigen</span></td></tr>';
 print '</table>';
 print '<div style="margin-top:8px">';
-print '<input type="submit" class="button buttonDelete" value="Modul-Daten löschen"';
-print ' onclick="return confirm(\'LETZTE WARNUNG: Alle Wallbox-Daten werden gelöscht. Fortfahren?\');">';
+print '<input type="submit" class="button buttonDelete" value="Modul deaktivieren"';
+print ' onclick="return confirm(\'Modul deaktivieren? RFID-Mappings bleiben für Aufbewahrungspflicht erhalten.\');">';
 print '</div>';
 print '</form>';
 

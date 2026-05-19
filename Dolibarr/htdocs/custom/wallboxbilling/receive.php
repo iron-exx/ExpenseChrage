@@ -31,7 +31,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     echo json_encode([
         'status'   => 'ok',
-        'version'  => '1.1.1',
+        'version'  => '1.1.2',
         'mode'     => 'direct-to-expensereport',
         'endpoint' => 'wallboxbilling/receive.php',
         'message'  => 'POST with DOLAPIKEY header required for session upload',
@@ -144,31 +144,45 @@ if (!$startTs || !$endTs || $endTs <= $startTs) {
     exit;
 }
 
-// ===== RFID → fk_user (mit Entity-Fallback) =====
+// ===== RFID → fk_user (nur AKTIVE Karten, mit Entity-Fallback) =====
+// Deaktivierte (active=0) Karten werden ignoriert — Mapping bleibt aber für
+// Aufbewahrungspflicht (§147 AO, 10 Jahre) in der Tabelle erhalten.
 $fkUser = 0;
 $userPrice = null;
+$wasInactive = false;
+
 $resUser = $db->query("SELECT fk_user, price_kwh FROM ".MAIN_DB_PREFIX."wallbox_rfid"
-    ." WHERE rfid_hash = '".$db->escape($rfidHash)."' AND entity = ".(int)$conf->entity);
+    ." WHERE rfid_hash = '".$db->escape($rfidHash)."' AND active = 1 AND entity = ".(int)$conf->entity);
 if ($resUser && ($obj = $db->fetch_object($resUser))) {
     $fkUser    = (int) $obj->fk_user;
     $userPrice = $obj->price_kwh;
 }
 if ($fkUser <= 0) {
+    // Fallback ohne Entity-Filter (NOLOGIN-Kontext)
     $resUser2 = $db->query("SELECT fk_user, price_kwh FROM ".MAIN_DB_PREFIX."wallbox_rfid"
-        ." WHERE rfid_hash = '".$db->escape($rfidHash)."' LIMIT 1");
+        ." WHERE rfid_hash = '".$db->escape($rfidHash)."' AND active = 1 LIMIT 1");
     if ($resUser2 && ($obj = $db->fetch_object($resUser2))) {
         $fkUser    = (int) $obj->fk_user;
         $userPrice = $obj->price_kwh;
     }
 }
 if ($fkUser <= 0) {
-    // RFID unbekannt — Admin muss erst mappen. HA-Addon retried beim nächsten Lauf.
-    dol_syslog('wallboxbilling receive: RFID unbekannt hash='.substr($rfidHash, 0, 16).'... — Mapping fehlt', LOG_WARNING);
+    // Prüfen ob die Karte deaktiviert existiert (für bessere Fehlermeldung)
+    $resInactive = $db->query("SELECT fk_user FROM ".MAIN_DB_PREFIX."wallbox_rfid"
+        ." WHERE rfid_hash = '".$db->escape($rfidHash)."' AND active = 0 LIMIT 1");
+    if ($resInactive && $db->num_rows($resInactive) > 0) {
+        $wasInactive = true;
+    }
+
+    $msg = $wasInactive
+        ? 'RFID-Karte wurde deaktiviert (Hash-Prefix '.substr($rfidHash, 0, 16).'...). Admin muss sie unter Wallbox-Abrechnung Konfiguration reaktivieren.'
+        : 'RFID nicht zugeordnet (Hash-Prefix '.substr($rfidHash, 0, 16).'...). Admin muss RFID einem Benutzer zuordnen unter Wallbox-Abrechnung Konfiguration.';
+    dol_syslog('wallboxbilling receive: '.($wasInactive ? 'inaktive' : 'unbekannte').' RFID hash='.substr($rfidHash, 0, 16).'...', LOG_WARNING);
     http_response_code(422);
     echo json_encode([
         'success' => false,
-        'error'   => 'RFID nicht zugeordnet (Hash-Prefix '.substr($rfidHash, 0, 16).'...). Admin muss RFID einem Benutzer zuordnen unter Wallbox-Abrechnung Konfiguration.',
-        'code'    => 'RFID_NOT_MAPPED',
+        'error'   => $msg,
+        'code'    => $wasInactive ? 'RFID_INACTIVE' : 'RFID_NOT_MAPPED',
     ]);
     exit;
 }
