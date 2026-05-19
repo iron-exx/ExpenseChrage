@@ -1,6 +1,6 @@
 name: "Wallbox Dolibarr Invoice"
 description: "RFID-basierte Abrechnung von Wallbox-Ladevorgängen via Dolibarr"
-version: "1.0.6"
+version: "1.0.8"
 slug: "wallbox-dolibarr"
 url: "https://github.com/iron-exx/evcharge-dolibarr-invoice"
 init: false

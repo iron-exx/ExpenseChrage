@@ -119,15 +119,29 @@ class WallboxApiClient:
             # HTTP 4xx/5xx prüfen
             response.raise_for_status()
 
+            # Content-Type prüfen — HTML-Antwort = Login-Page = Auth-Problem
+            content_type = response.headers.get('Content-Type', '').lower()
+            if 'text/html' in content_type:
+                error_msg = (
+                    "Server returned HTML statt JSON — wahrscheinlich Dolibarr Login-Page "
+                    "(nologin-Fix in receive.php nicht aktiv oder API-Key falsch). "
+                    f"Erste 200 Zeichen: {response.text[:200]}"
+                )
+                _LOGGER.error("API-Antwort ist HTML, nicht JSON: %s", error_msg)
+                return (False, error_msg)
+
             # Response-Body prüfen (HTTP 200 ≠ immer Erfolg)
             try:
                 body = response.json()
-                if body.get('success') is False and body.get('message') != 'Session already exists':
-                    error_msg = body.get('error', body.get('message', 'API returned success=false'))
-                    _LOGGER.error("API abgelehnt: %s", error_msg)
-                    return (False, error_msg)
-            except Exception:
-                pass  # Kein JSON-Body — HTTP-Statuscode reicht
+            except Exception as e:
+                error_msg = f"Keine gültige JSON-Antwort: {e} — Body: {response.text[:200]}"
+                _LOGGER.error("API-Antwort nicht parsbar: %s", error_msg)
+                return (False, error_msg)
+
+            if body.get('success') is False and body.get('message') != 'Session already exists':
+                error_msg = body.get('error', body.get('message', 'API returned success=false'))
+                _LOGGER.error("API abgelehnt: %s", error_msg)
+                return (False, error_msg)
 
             _LOGGER.info("Session erfolgreich übertragen: rfid_hash=%s..., kwh=%.3f",
                         payload["rfid_hash"][:16], payload["kwh"])

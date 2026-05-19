@@ -23,8 +23,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     echo json_encode([
         'status'   => 'ok',
-        'version'  => '1.0.7',
-        'nologin'  => 'active',
+        'version'  => '1.0.8',
+        'nologin'  => 'define-active',
         'endpoint' => 'wallboxbilling/receive.php',
         'message'  => 'POST with DOLAPIKEY header required for session upload',
         'php'      => PHP_VERSION,
@@ -38,8 +38,16 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
-// Dolibarr laden — $nologin=1 verhindert Login-Redirect für API-Requests
-$nologin     = 1;
+// Dolibarr laden — define()-Konstanten verhindern Login-Redirect für API-Requests
+// (Variablen wie $nologin=1 werden in Dolibarr 20+ ignoriert)
+if (!defined('NOLOGIN'))         define('NOLOGIN', '1');
+if (!defined('NOCSRFCHECK'))     define('NOCSRFCHECK', '1');
+if (!defined('NOTOKENRENEWAL'))  define('NOTOKENRENEWAL', '1');
+if (!defined('NOREQUIREMENU'))   define('NOREQUIREMENU', '1');
+if (!defined('NOREQUIREHTML'))   define('NOREQUIREHTML', '1');
+if (!defined('NOREQUIREAJAX'))   define('NOREQUIREAJAX', '1');
+if (!defined('NOIPCHECK'))       define('NOIPCHECK', '1');
+$nologin     = 1; // Legacy-Kompatibilität
 $nocsrfcheck = 1;
 $res = 0;
 if (!$res && !empty($_SERVER['CONTEXT_DOCUMENT_ROOT'])) {
