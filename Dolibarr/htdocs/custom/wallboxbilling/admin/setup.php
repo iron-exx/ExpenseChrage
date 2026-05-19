@@ -79,37 +79,75 @@ try {
         setEventMessages($langs->trans('SetupSaved'), null, 'mesgs');
     }
 
-    if ($action === 'save_rfid' && !empty($submitted_token) && $token_ok) {
+    // RFID-Tag zu User HINZUFÜGEN (ein User kann mehrere Tags haben)
+    if ($action === 'add_rfid' && !empty($submitted_token) && $token_ok) {
         $user_id  = GETPOST('user_id', 'int');
         $rfid_hex = trim(GETPOST('rfid_hex', 'alpha'));
-        $price    = price2num(GETPOST('price_kwh', 'alpha'));
 
         if ($user_id > 0 && !empty($rfid_hex)) {
             $rfid_hash = hash('sha256', strtoupper($rfid_hex));
-            dol_syslog('wallboxbilling: save RFID user='.$user_id.' hash='.substr($rfid_hash, 0, 16).'...', LOG_INFO);
 
-            $db->begin();
-            $db->query("DELETE FROM ".MAIN_DB_PREFIX."wallbox_rfid WHERE fk_user = ".(int)$user_id." AND entity = ".(int)$conf->entity);
-            $sql = "INSERT INTO ".MAIN_DB_PREFIX."wallbox_rfid"
-                ." (fk_user, rfid_hash, label, price_kwh, active, entity, date_creation)"
-                ." VALUES (".(int)$user_id
-                .", '".$db->escape($rfid_hash)."'"
-                .", '".$db->escape($rfid_hex)."'"
-                .", ".(float)$price
-                .", 1"
-                .", ".(int)$conf->entity
-                .", '".$db->idate(dol_now())."'"
-                .")";
-            if ($db->query($sql)) {
-                $db->commit();
-                setEventMessages($langs->trans('RFIDHashSaved'), null, 'mesgs');
+            // Prüfen ob dieser Hash bereits einem User gehört (UNIQUE-Constraint)
+            $resExist = $db->query("SELECT fk_user FROM ".MAIN_DB_PREFIX."wallbox_rfid"
+                ." WHERE rfid_hash = '".$db->escape($rfid_hash)."'");
+            if ($resExist && ($oExist = $db->fetch_object($resExist))) {
+                if ((int) $oExist->fk_user === (int) $user_id) {
+                    setEventMessages('Dieser RFID-Tag ist bereits diesem Benutzer zugeordnet.', null, 'warnings');
+                } else {
+                    setEventMessages('Dieser RFID-Tag ist bereits einem anderen Benutzer (#'.(int)$oExist->fk_user.') zugeordnet.', null, 'errors');
+                }
             } else {
-                $db->rollback();
+                // Aktuellen User-Preis übernehmen (vom ersten existierenden Tag) oder Default
+                $defPrice = getDolGlobalString('WALLBOXBILLING_DEFAULT_PRICE', '0.30');
+                $resPrice = $db->query("SELECT price_kwh FROM ".MAIN_DB_PREFIX."wallbox_rfid"
+                    ." WHERE fk_user = ".(int)$user_id." AND entity = ".(int)$conf->entity
+                    ." AND price_kwh IS NOT NULL LIMIT 1");
+                if ($resPrice && ($oPrice = $db->fetch_object($resPrice))) {
+                    $defPrice = $oPrice->price_kwh;
+                }
+
+                $sql = "INSERT INTO ".MAIN_DB_PREFIX."wallbox_rfid"
+                    ." (fk_user, rfid_hash, label, price_kwh, active, entity, date_creation)"
+                    ." VALUES (".(int)$user_id
+                    .", '".$db->escape($rfid_hash)."'"
+                    .", '".$db->escape(strtoupper($rfid_hex))."'"
+                    .", ".(float)$defPrice
+                    .", 1, ".(int)$conf->entity
+                    .", '".$db->idate(dol_now())."')";
+                if ($db->query($sql)) {
+                    dol_syslog('wallboxbilling: RFID hinzugefügt user='.$user_id.' hash='.substr($rfid_hash, 0, 16).'...', LOG_INFO);
+                    setEventMessages('RFID-Tag '.dol_escape_htmltag(strtoupper($rfid_hex)).' hinzugefügt.', null, 'mesgs');
+                } else {
+                    setEventMessages($db->lasterror(), null, 'errors');
+                }
+            }
+        }
+    }
+
+    // Einzelnen RFID-Tag LÖSCHEN
+    if ($action === 'delete_rfid' && !empty($submitted_token) && $token_ok) {
+        $rfid_id = GETPOST('rfid_id', 'int');
+        if ($rfid_id > 0) {
+            if ($db->query("DELETE FROM ".MAIN_DB_PREFIX."wallbox_rfid WHERE rowid = ".(int)$rfid_id." AND entity = ".(int)$conf->entity)) {
+                setEventMessages('RFID-Tag gelöscht.', null, 'mesgs');
+            } else {
                 setEventMessages($db->lasterror(), null, 'errors');
             }
-        } elseif ($user_id > 0) {
-            $db->query("DELETE FROM ".MAIN_DB_PREFIX."wallbox_rfid WHERE fk_user = ".(int)$user_id." AND entity = ".(int)$conf->entity);
-            setEventMessages($langs->trans('RFIDHashSaved'), null, 'mesgs');
+        }
+    }
+
+    // Preis-pro-kWh für ALLE Tags eines Users aktualisieren
+    if ($action === 'update_price' && !empty($submitted_token) && $token_ok) {
+        $user_id = GETPOST('user_id', 'int');
+        $price   = price2num(GETPOST('price_kwh', 'alpha'));
+        if ($user_id > 0) {
+            if ($db->query("UPDATE ".MAIN_DB_PREFIX."wallbox_rfid"
+                ." SET price_kwh = ".(float)$price
+                ." WHERE fk_user = ".(int)$user_id." AND entity = ".(int)$conf->entity)) {
+                setEventMessages('Preis aktualisiert.', null, 'mesgs');
+            } else {
+                setEventMessages($db->lasterror(), null, 'errors');
+            }
         }
     }
     // Test-Abrechnung und Diagnose-Test-Session entfernt in 1.1.0 —
@@ -190,70 +228,104 @@ print '</div></form>';
 
 print '<br>';
 
-// --- RFID-Verwaltung ---
+// --- RFID-Verwaltung (Multi-Tag pro Benutzer) ---
 print load_fiche_titre($langs->trans('WallboxUserRFIDManagement'));
+
+// Benutzer laden
+$sqlUsers = "SELECT rowid, login, lastname, firstname"
+          ." FROM ".MAIN_DB_PREFIX."user"
+          ." WHERE statut = 1 AND entity = ".(int)$conf->entity
+          ." ORDER BY login";
+$resUsers = $db->query($sqlUsers);
+
+// RFID-Tags pro User vorladen — eine Query statt N
+$tagsByUser = array();
+$resTags = $db->query("SELECT rowid, fk_user, rfid_hash, label, price_kwh"
+    ." FROM ".MAIN_DB_PREFIX."wallbox_rfid"
+    ." WHERE entity = ".(int)$conf->entity
+    ." ORDER BY fk_user, rowid");
+if ($resTags) {
+    while ($t = $db->fetch_object($resTags)) {
+        $tagsByUser[(int)$t->fk_user][] = $t;
+    }
+    $db->free($resTags);
+}
+
+$defaultPrice = getDolGlobalString('WALLBOXBILLING_DEFAULT_PRICE', '0.30');
+
 print '<table class="noborder centpercent">';
 print '<tr class="liste_titre">';
-print '<td>'.$langs->trans('User').'</td>';
-print '<td>'.$langs->trans('RFIDHex').'</td>';
-print '<td>'.$langs->trans('RFIDHash').'</td>';
-print '<td>'.$langs->trans('PricePerKWh').'</td>';
-print '<td>'.$langs->trans('Action').'</td>';
+print '<td style="width:20%">'.$langs->trans('User').'</td>';
+print '<td>RFID-Karten</td>';
+print '<td style="width:18%">'.$langs->trans('PricePerKWh').'</td>';
 print '</tr>';
 
-$sql = "SELECT u.rowid, u.login, u.lastname, u.firstname,"
-    ." r.rfid_hash, r.label as rfid_hex, r.price_kwh"
-    ." FROM ".MAIN_DB_PREFIX."user u"
-    ." LEFT JOIN ".MAIN_DB_PREFIX."wallbox_rfid r ON r.fk_user = u.rowid AND r.entity = ".(int)$conf->entity
-    ." WHERE u.statut = 1 AND u.entity = ".(int)$conf->entity
-    ." ORDER BY u.login";
+if ($resUsers) {
+    while ($u = $db->fetch_object($resUsers)) {
+        $uid       = (int) $u->rowid;
+        $userTags  = isset($tagsByUser[$uid]) ? $tagsByUser[$uid] : array();
+        $userPrice = !empty($userTags) && !empty($userTags[0]->price_kwh)
+            ? price2num($userTags[0]->price_kwh) : $defaultPrice;
 
-$resql = $db->query($sql);
-if ($resql) {
-    while ($obj = $db->fetch_object($resql)) {
-        $cur_price = !empty($obj->price_kwh) ? price2num($obj->price_kwh) : getDolGlobalString('WALLBOXBILLING_DEFAULT_PRICE', '0.30');
-        print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'">';
-        print '<input type="hidden" name="token" value="'.$token.'">';
-        print '<input type="hidden" name="action" value="save_rfid">';
-        print '<input type="hidden" name="user_id" value="'.(int)$obj->rowid.'">';
         print '<tr class="oddeven">';
-        print '<td>'.dol_escape_htmltag($obj->login).' ('.dol_escape_htmltag($obj->firstname.' '.$obj->lastname).')</td>';
-        print '<td><input type="text" name="rfid_hex" class="flat" size="16"'
-            .' value="'.dol_escape_htmltag((string)$obj->rfid_hex).'" placeholder="EFCD083E"></td>';
-        print '<td><span class="opacitymedium small">';
-        print !empty($obj->rfid_hash) ? substr($obj->rfid_hash, 0, 16).'…' : '—';
-        print '</span></td>';
-        print '<td><input type="text" name="price_kwh" class="flat" size="6"'
-            .' value="'.dol_escape_htmltag((string)$cur_price).'" placeholder="0.30"> &euro;/kWh</td>';
-        print '<td><input type="submit" class="button smallpaddingimp" value="'.$langs->trans('Save').'"></td>';
-        print '</tr></form>';
+        // Spalte 1: Benutzer
+        print '<td style="vertical-align:top;padding-top:8px"><b>'.dol_escape_htmltag($u->login).'</b><br>';
+        print '<span class="opacitymedium small">'.dol_escape_htmltag(trim($u->firstname.' '.$u->lastname)).'</span></td>';
+
+        // Spalte 2: RFID-Tags + Add-Form
+        print '<td style="vertical-align:top">';
+        if (empty($userTags)) {
+            print '<span class="opacitymedium small">— keine Karten zugeordnet —</span><br>';
+        } else {
+            foreach ($userTags as $t) {
+                print '<div style="margin-bottom:4px;padding:4px 8px;background:#f8f8f8;border-radius:3px;display:inline-block;margin-right:6px">';
+                print '<code>'.dol_escape_htmltag((string)$t->label).'</code>';
+                print ' <span class="opacitymedium small" title="'.dol_escape_htmltag($t->rfid_hash).'">('.substr($t->rfid_hash, 0, 12).'…)</span>';
+                print ' <form method="POST" action="'.$_SERVER['PHP_SELF'].'" style="display:inline;margin-left:6px">';
+                print '<input type="hidden" name="token" value="'.$token.'">';
+                print '<input type="hidden" name="action" value="delete_rfid">';
+                print '<input type="hidden" name="rfid_id" value="'.(int)$t->rowid.'">';
+                print '<button type="submit" class="button smallpaddingimp" style="padding:1px 6px;color:#c00"'
+                    .' onclick="return confirm(\'Karte '.dol_escape_js($t->label).' wirklich löschen?\');" title="Löschen">×</button>';
+                print '</form>';
+                print '</div>';
+            }
+            print '<br>';
+        }
+        // Add-Form für neuen Tag
+        print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'" style="display:inline-block;margin-top:4px">';
+        print '<input type="hidden" name="token" value="'.$token.'">';
+        print '<input type="hidden" name="action" value="add_rfid">';
+        print '<input type="hidden" name="user_id" value="'.$uid.'">';
+        print '<input type="text" name="rfid_hex" class="flat" size="14" placeholder="EFCD083E" style="text-transform:uppercase">';
+        print ' <input type="submit" class="button smallpaddingimp" value="+ Karte hinzufügen">';
+        print '</form>';
+        print '</td>';
+
+        // Spalte 3: Preis
+        print '<td style="vertical-align:top">';
+        if (!empty($userTags)) {
+            print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'" style="display:inline">';
+            print '<input type="hidden" name="token" value="'.$token.'">';
+            print '<input type="hidden" name="action" value="update_price">';
+            print '<input type="hidden" name="user_id" value="'.$uid.'">';
+            print '<input type="text" name="price_kwh" class="flat" size="6"'
+                .' value="'.dol_escape_htmltag((string)$userPrice).'"> &euro;/kWh';
+            print ' <input type="submit" class="button smallpaddingimp" value="'.$langs->trans('Save').'">';
+            print '</form>';
+        } else {
+            print '<span class="opacitymedium small">'.$defaultPrice.' &euro;/kWh (Default)</span>';
+        }
+        print '</td>';
+        print '</tr>';
     }
-    $db->free($resql);
-} else {
-    print '<tr><td colspan="5" class="error">'.$db->lasterror().'</td></tr>';
+    $db->free($resUsers);
 }
 print '</table>';
-
-// Hinweis-Box: Erklärung der neuen Architektur
-print '<br>';
-print '<div class="info" style="padding:10px">';
-print '<b>Ablauf ab 1.1.0:</b> Sobald das HA-Addon einen Ladevorgang überträgt, '
-    .'wird er automatisch in die Spesenabrechnung des Mitarbeiters für den '
-    .'jeweiligen Monat eingetragen. Existiert für den Monat noch keine Abrechnung, '
-    .'wird ein neuer Entwurf angelegt. Voraussetzung: die RFID-Karte muss oben '
-    .'einem Benutzer zugeordnet sein.';
-print '</div>';
 
 // --- Modul deinstallieren ---
 print '<br>';
 print load_fiche_titre('Modul deinstallieren');
-print '<div class="warning" style="padding:10px;margin-bottom:12px">';
-print '<b>Achtung:</b> Diese Aktion löscht unwiderruflich alle Wallbox-Daten aus der Datenbank:<br>';
-print '&bull; Tabellen <code>llx_wallbox_sessions</code> und <code>llx_wallbox_rfid</code><br>';
-print '&bull; Alle Modulkonstanten (WALLBOXBILLING_*)<br>';
-print '&bull; Spesentyp TK_ELE<br>';
-print 'Die PHP-Dateien unter <code>custom/wallboxbilling/</code> müssen danach manuell vom Server gelöscht werden.';
-print '</div>';
 print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'">';
 print '<input type="hidden" name="token" value="'.$token.'">';
 print '<input type="hidden" name="action" value="uninstall_module">';
