@@ -12,7 +12,7 @@ import sqlite3
 import time
 import logging
 from typing import Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Hash-Utility importieren
 import sys
@@ -413,9 +413,20 @@ class SessionManager:
         except (ValueError, TypeError):
             date_obj = datetime.now()
 
-        start_time = date_obj.replace(hour=12, minute=0, second=0, microsecond=0).isoformat()
-        end_time   = date_obj.replace(hour=12, minute=1, second=0, microsecond=0).isoformat()
-        now        = datetime.now().isoformat()
+        # Aktuelle Uhrzeit verwenden — verhindert Duplikat-Kollisionen bei
+        # mehreren manuellen Sessions am selben Tag (Dolibarr lehnt sonst
+        # mit "Session already exists" ab, da rfid_hash+start+end identisch)
+        now_dt   = datetime.now().replace(microsecond=0)
+        start_dt = date_obj.replace(
+            hour=now_dt.hour,
+            minute=now_dt.minute,
+            second=now_dt.second,
+            microsecond=0,
+        )
+        end_dt   = start_dt + timedelta(minutes=1)
+        start_time = start_dt.isoformat()
+        end_time   = end_dt.isoformat()
+        now        = now_dt.isoformat()
 
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()

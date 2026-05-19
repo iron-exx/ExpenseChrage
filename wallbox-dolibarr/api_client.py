@@ -138,10 +138,19 @@ class WallboxApiClient:
                 _LOGGER.error("API-Antwort nicht parsbar: %s", error_msg)
                 return (False, error_msg)
 
-            if body.get('success') is False and body.get('message') != 'Session already exists':
-                error_msg = body.get('error', body.get('message', 'API returned success=false'))
-                _LOGGER.error("API abgelehnt: %s", error_msg)
-                return (False, error_msg)
+            if body.get('success') is False:
+                msg = body.get('message', '')
+                if msg == 'Session already exists':
+                    # Idempotent: schon übertragen → als Erfolg markieren, aber loggen
+                    _LOGGER.warning(
+                        "Session bereits in Dolibarr (rfid_hash+start+end identisch) — "
+                        "als übertragen markiert. rfid_hash=%s...",
+                        payload['rfid_hash'][:16]
+                    )
+                else:
+                    error_msg = body.get('error', msg or 'API returned success=false')
+                    _LOGGER.error("API abgelehnt: %s", error_msg)
+                    return (False, error_msg)
 
             _LOGGER.info("Session erfolgreich übertragen: rfid_hash=%s..., kwh=%.3f",
                         payload["rfid_hash"][:16], payload["kwh"])
