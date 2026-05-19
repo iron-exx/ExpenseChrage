@@ -136,6 +136,10 @@ try {
         } elseif (is_array($result)) {
             $billing_results = $result;
         }
+        // Zeilen-Insert-Fehler einsammeln (z.B. Schema-Probleme)
+        if (!empty($cron->errors)) {
+            $billing_error = implode(' | ', $cron->errors);
+        }
     }
 
     if ($action === 'insert_test_session' && !empty($submitted_token) && $token_ok) {

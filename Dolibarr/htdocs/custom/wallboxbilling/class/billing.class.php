@@ -172,14 +172,24 @@ class WallboxBillingCron extends CommonObject
      */
     private function findExpenseReport($fkUser, $month, $year)
     {
+        // Nur Draft-Reports (fk_statut=0) — validierte/genehmigte können nicht
+        // mehr erweitert werden. Suche per Datums-Überlappung, nicht per
+        // YEAR/MONTH(date_debut) — robuster wenn ein Report-Zeitraum nicht
+        // exakt am Monatsanfang beginnt.
+        $lastDay   = (int) date('t', mktime(0, 0, 0, $month, 1, $year));
+        $periodStr = sprintf('%04d-%02d-01', $year, $month);
+        $periodEnd = sprintf('%04d-%02d-%02d', $year, $month, $lastDay);
+
         $sql = "SELECT rowid FROM ".MAIN_DB_PREFIX."expensereport"
              . " WHERE fk_user_author = ".(int)$fkUser
-             . " AND YEAR(date_debut) = ".(int)$year
-             . " AND MONTH(date_debut) = ".(int)$month
-             . " ORDER BY rowid DESC LIMIT 1";
+             . " AND fk_statut = 0"
+             . " AND date_debut <= '".$periodEnd." 23:59:59'"
+             . " AND date_fin   >= '".$periodStr." 00:00:00'"
+             . " ORDER BY rowid ASC LIMIT 1";
 
         $res = $this->db->query($sql);
         if ($res && ($obj = $this->db->fetch_object($res))) {
+            dol_syslog("WallboxBilling: bestehenden Draft-Report #".(int)$obj->rowid." für User=$fkUser $month/$year wiederverwendet", LOG_INFO);
             return (int) $obj->rowid;
         }
         return 0;
@@ -242,9 +252,12 @@ class WallboxBillingCron extends CommonObject
             trim($session->wallbox_id).' '.date('d.m.Y H:i', $ts).' [sid:'.$sid.']'
         );
 
+        // ACHTUNG: llx_expensereport_det hat KEINE Spalte rule_warning_ignored —
+        // sie heißt rule_warning_message (varchar) und wird nur bei Validierungs-
+        // Regeln gesetzt. Wir lassen sie weg.
         $sql = "INSERT INTO ".MAIN_DB_PREFIX."expensereport_det"
              . " (fk_expensereport, fk_c_type_fees, comments, qty, value_unit,"
-             . "  total_ht, tva_tx, total_tva, total_ttc, date, fk_projet, rule_warning_ignored)"
+             . "  total_ht, tva_tx, total_tva, total_ttc, date, fk_projet)"
              . " VALUES ("
              . (int)$reportId.", "
              . (int)$typeId.", "
@@ -254,9 +267,18 @@ class WallboxBillingCron extends CommonObject
              . $total.", "
              . "0, 0, ".$total.", "
              . "'".$this->db->idate($ts)."', "
-             . "0, 1)";
+             . "0)";
 
-        return (bool) $this->db->query($sql);
+        if (!$this->db->query($sql)) {
+            dol_syslog(
+                "WallboxBilling: addSessionLine INSERT failed for sid=$sid: "
+                .$this->db->lasterror()." | SQL: ".$sql,
+                LOG_ERR
+            );
+            $this->errors[] = "Zeile für Session #$sid konnte nicht eingefügt werden: ".$this->db->lasterror();
+            return false;
+        }
+        return true;
     }
 
     /**
