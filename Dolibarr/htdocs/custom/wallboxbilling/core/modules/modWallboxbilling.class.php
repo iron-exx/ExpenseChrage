@@ -30,7 +30,7 @@ class modWallboxbilling extends DolibarrModules
         $this->name = preg_replace('/^mod/i', '', get_class($this)); // → 'Wallboxbilling'
         $this->description = 'WallboxbillingDescription'; // wird über lang-Datei aufgelöst
 
-        $this->version = '1.0.6';
+        $this->version = '1.0.7';
         // const_name muss ein gültiger SQL/PHP-Konstanten-Name sein —
         // strtoupper(name) enthält Leerzeichen, daher fix auf den Modul-Slug.
         $this->const_name = 'MAIN_MODULE_'.strtoupper($this->name); // MAIN_MODULE_WALLBOXBILLING
@@ -198,6 +198,9 @@ class modWallboxbilling extends DolibarrModules
      */
     public function init($options = '')
     {
+        // Alte Menü-Einträge zuerst löschen — verhindert "already exists" bei Neuinstallation
+        $this->delete_menus();
+
         // SQL-Statements für Tabellen + Indizes (D-07, DB-03)
         $sql = array();
 
