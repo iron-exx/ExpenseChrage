@@ -81,17 +81,21 @@ class WallboxBillingCron extends CommonObject
         $this->validateDraftReportsForMonth($m2month, $m2year, $user);
 
         // Sessions für M-1 laden (je Session eine Zeile, nach Benutzer sortiert)
+        // JOIN über rfid_hash (NICHT s.fk_user) — receive.php kann fk_user nicht
+        // immer auflösen (Entity-Mismatch, NOLOGIN-Kontext). Die User-Zuordnung
+        // erfolgt verlässlich über die wallbox_rfid-Tabelle, genau wie in der
+        // Ladevorgänge-Anzeige (index.php) auch.
         $defaultPrice = (float) getDolGlobalString('WALLBOXBILLING_DEFAULT_PRICE', '0.30');
-        $sql = "SELECT s.rowid, s.fk_user, s.wallbox_id, s.start_time, s.kwh,"
+        $sql = "SELECT s.rowid, r.fk_user AS fk_user, s.wallbox_id, s.start_time, s.kwh,"
              . " COALESCE(r.price_kwh, ".$defaultPrice.") AS eff_price"
              . " FROM ".MAIN_DB_PREFIX."wallbox_sessions s"
-             . " LEFT JOIN ".MAIN_DB_PREFIX."wallbox_rfid r"
-             . "   ON r.fk_user = s.fk_user AND r.entity = ".(int)$conf->entity
+             . " INNER JOIN ".MAIN_DB_PREFIX."wallbox_rfid r"
+             . "   ON r.rfid_hash = s.rfid_hash AND r.entity = ".(int)$conf->entity
              . " WHERE s.start_time >= '".$this->db->escape($dr['start'])."'"
              . " AND s.start_time <= '".$this->db->escape($dr['end'])."'"
              . " AND s.status = 'completed'"
-             . " AND s.fk_user > 0"
-             . " ORDER BY s.fk_user, s.start_time";
+             . " AND r.fk_user > 0"
+             . " ORDER BY r.fk_user, s.start_time";
 
         $resql = $this->db->query($sql);
         if (!$resql) {

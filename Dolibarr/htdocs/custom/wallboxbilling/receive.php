@@ -23,7 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     echo json_encode([
         'status'   => 'ok',
-        'version'  => '1.0.10',
+        'version'  => '1.0.11',
         'nologin'  => 'define-active',
         'endpoint' => 'wallboxbilling/receive.php',
         'message'  => 'POST with DOLAPIKEY header required for session upload',
@@ -159,12 +159,21 @@ if ($resCheck && $db->num_rows($resCheck) > 0) {
     exit;
 }
 
-// RFID-Hash → fk_user auflösen
+// RFID-Hash → fk_user auflösen — zuerst in aktueller Entity, dann ohne Filter
 $fkUser = 0;
 $resUser = $db->query("SELECT fk_user FROM ".MAIN_DB_PREFIX."wallbox_rfid"
     ." WHERE rfid_hash = '".$db->escape($rfidHash)."' AND entity = ".(int)$conf->entity);
 if ($resUser && ($obj = $db->fetch_object($resUser))) {
     $fkUser = (int) $obj->fk_user;
+}
+if ($fkUser <= 0) {
+    // Fallback ohne Entity-Filter (NOLOGIN-Kontext kann andere Default-Entity haben)
+    $resUser2 = $db->query("SELECT fk_user FROM ".MAIN_DB_PREFIX."wallbox_rfid"
+        ." WHERE rfid_hash = '".$db->escape($rfidHash)."' LIMIT 1");
+    if ($resUser2 && ($obj = $db->fetch_object($resUser2))) {
+        $fkUser = (int) $obj->fk_user;
+        dol_syslog('wallboxbilling receive: fk_user via entity-fallback aufgelöst → '.$fkUser, LOG_INFO);
+    }
 }
 
 // Session einfügen

@@ -64,6 +64,14 @@ if ($resql_cols) {
     }
 }
 
+// --- Auto-Heal: fk_user in wallbox_sessions aus wallbox_rfid nachtragen ---
+// Bestehende Sessions mit fk_user=0 die ein gültiges RFID-Mapping haben,
+// werden nachträglich verknüpft — sonst werden sie von der Abrechnung übersprungen.
+$db->query("UPDATE ".MAIN_DB_PREFIX."wallbox_sessions s"
+    ." INNER JOIN ".MAIN_DB_PREFIX."wallbox_rfid r ON r.rfid_hash = s.rfid_hash"
+    ." SET s.fk_user = r.fk_user"
+    ." WHERE (s.fk_user = 0 OR s.fk_user IS NULL) AND r.fk_user > 0");
+
 $action = GETPOST('action', 'aZ09');
 
 // --- CSRF-Token manuell prüfen (ohne checkToken() — Dolibarr-versionsunabhängig) ---
