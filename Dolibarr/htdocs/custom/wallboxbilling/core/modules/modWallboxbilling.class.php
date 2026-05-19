@@ -30,7 +30,7 @@ class modWallboxbilling extends DolibarrModules
         $this->name = preg_replace('/^mod/i', '', get_class($this)); // → 'Wallboxbilling'
         $this->description = 'WallboxbillingDescription'; // wird über lang-Datei aufgelöst
 
-        $this->version = '1.0.8';
+        $this->version = '1.0.9';
         // const_name muss ein gültiger SQL/PHP-Konstanten-Name sein —
         // strtoupper(name) enthält Leerzeichen, daher fix auf den Modul-Slug.
         $this->const_name = 'MAIN_MODULE_'.strtoupper($this->name); // MAIN_MODULE_WALLBOXBILLING
