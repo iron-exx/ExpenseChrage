@@ -144,6 +144,43 @@ try {
             setEventMessages('Fehler: '.$db->lasterror(), null, 'errors');
         }
     }
+
+    if ($action === 'uninstall_module' && !empty($submitted_token) && $token_ok) {
+        $confirm = GETPOST('confirm_uninstall', 'alpha');
+        if ($confirm !== 'JA') {
+            setEventMessages('Bitte "JA" eingeben um die Deinstallation zu bestätigen.', null, 'warnings');
+        } else {
+            $db->begin();
+            $err = 0;
+
+            // Tabellen löschen
+            foreach (array('wallbox_sessions', 'wallbox_rfid') as $tbl) {
+                if (!$db->query("DROP TABLE IF EXISTS ".MAIN_DB_PREFIX.$tbl)) {
+                    $err++;
+                    setEventMessages('DROP TABLE '.$tbl.': '.$db->lasterror(), null, 'errors');
+                }
+            }
+
+            // Modul-Konstanten entfernen
+            if (!$db->query("DELETE FROM ".MAIN_DB_PREFIX."const WHERE name LIKE 'WALLBOXBILLING_%' AND entity = ".(int)$conf->entity)) {
+                $err++;
+                setEventMessages('DELETE const: '.$db->lasterror(), null, 'errors');
+            }
+
+            // Modul-Aktivierung deaktivieren
+            $db->query("DELETE FROM ".MAIN_DB_PREFIX."const WHERE name = 'MAIN_MODULE_WALLBOXBILLING' AND entity = ".(int)$conf->entity);
+
+            // TK_ELE Spesentyp entfernen (nur wenn von diesem Modul angelegt)
+            $db->query("DELETE FROM ".MAIN_DB_PREFIX."c_type_fees WHERE code = 'TK_ELE'");
+
+            if ($err === 0) {
+                $db->commit();
+                setEventMessages('Modul-Daten erfolgreich gelöscht. Bitte PHP-Dateien manuell vom Server unter custom/wallboxbilling/ entfernen.', null, 'mesgs');
+            } else {
+                $db->rollback();
+            }
+        }
+    }
 } catch (Throwable $e) {
     $save_error = get_class($e).': '.$e->getMessage().' in '.$e->getFile().':'.$e->getLine();
     dol_syslog('wallboxbilling setup error: '.$save_error, LOG_ERR);
@@ -297,6 +334,31 @@ print '<input type="hidden" name="token" value="'.$token.'">';
 print '<input type="hidden" name="action" value="insert_test_session">';
 print '<input type="submit" class="button smallpaddingimp" value="Test-Session einfügen" onclick="return confirm(\'Test-Session (5 kWh) einfügen?\');">';
 print ' <span class="opacitymedium small">→ danach &quot;Ladevorgänge&quot; prüfen</span>';
+print '</form>';
+
+// --- Modul deinstallieren ---
+print '<br>';
+print load_fiche_titre('Modul deinstallieren');
+print '<div class="warning" style="padding:10px;margin-bottom:12px">';
+print '<b>Achtung:</b> Diese Aktion löscht unwiderruflich alle Wallbox-Daten aus der Datenbank:<br>';
+print '&bull; Tabellen <code>llx_wallbox_sessions</code> und <code>llx_wallbox_rfid</code><br>';
+print '&bull; Alle Modulkonstanten (WALLBOXBILLING_*)<br>';
+print '&bull; Spesentyp TK_ELE<br>';
+print 'Die PHP-Dateien unter <code>custom/wallboxbilling/</code> müssen danach manuell vom Server gelöscht werden.';
+print '</div>';
+print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'">';
+print '<input type="hidden" name="token" value="'.$token.'">';
+print '<input type="hidden" name="action" value="uninstall_module">';
+print '<table class="noborder" style="width:auto">';
+print '<tr><td style="padding-right:10px"><label>Sicherheitsbestätigung:</label></td>';
+print '<td><input type="text" name="confirm_uninstall" class="flat" size="6" placeholder="JA"';
+print ' style="border:2px solid #e05353;font-weight:bold;text-transform:uppercase">';
+print ' <span class="opacitymedium small">→ Tippe <b>JA</b> um zu bestätigen</span></td></tr>';
+print '</table>';
+print '<div style="margin-top:8px">';
+print '<input type="submit" class="button buttonDelete" value="Modul-Daten löschen"';
+print ' onclick="return confirm(\'LETZTE WARNUNG: Alle Wallbox-Daten werden gelöscht. Fortfahren?\');">';
+print '</div>';
 print '</form>';
 
 print dol_get_fiche_end();
