@@ -48,6 +48,7 @@ _DEFAULT_SENSOR_ENERGY = "sensor.alfen_energy_total"
 session_manager = None
 current_config = {}
 ha_ws = None
+api_client = None
 
 
 def load_config():
@@ -289,7 +290,7 @@ async def check_startup_session():
 
 async def main():
     """Hauptschleife (D-03, D-10, D-11) - erweitert für Session-Tracking und API-Transmission"""
-    global session_manager, current_config, ha_ws
+    global session_manager, current_config, ha_ws, api_client
 
     _LOGGER.info("Wallbox-Dolibarr Addon startet...")
 
