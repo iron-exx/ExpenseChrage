@@ -23,6 +23,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     echo json_encode([
         'status'   => 'ok',
+        'version'  => '1.0.5',
+        'nologin'  => 'active',
         'endpoint' => 'wallboxbilling/receive.php',
         'message'  => 'POST with DOLAPIKEY header required for session upload',
         'php'      => PHP_VERSION,
