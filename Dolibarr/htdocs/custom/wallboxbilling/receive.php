@@ -36,7 +36,9 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
-// Dolibarr laden — receive.php liegt 2 Ebenen unter htdocs/
+// Dolibarr laden — $nologin=1 verhindert Login-Redirect für API-Requests
+$nologin     = 1;
+$nocsrfcheck = 1;
 $res = 0;
 if (!$res && !empty($_SERVER['CONTEXT_DOCUMENT_ROOT'])) {
     $res = @include $_SERVER['CONTEXT_DOCUMENT_ROOT'].'/main.inc.php';
