@@ -76,12 +76,14 @@ if (empty($apiKey)) {
 }
 
 // User per API-Key authentifizieren
+// Dolibarr 20+ speichert api_key als SHA-256-Hash → beide Varianten prüfen
+$apiKeyHashed = hash('sha256', $apiKey);
 $sqlAuth = "SELECT rowid FROM ".MAIN_DB_PREFIX."user"
-         ." WHERE api_key = '".$db->escape($apiKey)."'"
+         ." WHERE (api_key = '".$db->escape($apiKey)."' OR api_key = '".$db->escape($apiKeyHashed)."')"
          ." AND statut = 1 AND entity IN (0, ".(int)$conf->entity.")";
 $resAuth = $db->query($sqlAuth);
 if (!$resAuth || $db->num_rows($resAuth) == 0) {
-    dol_syslog('wallboxbilling receive: auth failed — key='.substr($apiKey, 0, 8).'***', LOG_WARNING);
+    dol_syslog('wallboxbilling receive: auth failed — key='.substr($apiKey, 0, 8).'*** hash='.substr($apiKeyHashed, 0, 8).'***', LOG_WARNING);
     http_response_code(401);
     echo json_encode(['error' => 'Invalid or inactive API key']);
     exit;
