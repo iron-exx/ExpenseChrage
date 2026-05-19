@@ -303,8 +303,8 @@ class SessionManager:
             return None
 
         rfid_hash = hash_rfid(rfid_hex)
-        start_time = datetime.now().isoformat()
-        created_at = datetime.now().isoformat()
+        start_time = datetime.now().replace(microsecond=0).isoformat()
+        created_at = datetime.now().replace(microsecond=0).isoformat()
 
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -337,7 +337,7 @@ class SessionManager:
             self._logger.warning("Keine aktive Session zum Beenden")
             return None
 
-        end_time = datetime.now().isoformat()
+        end_time = datetime.now().replace(microsecond=0).isoformat()
         total_kwh = end_energy_kwh - active['start_energy_kwh']
         total_kwh = max(0.0, total_kwh)  # Negativer Wert verhindern
 

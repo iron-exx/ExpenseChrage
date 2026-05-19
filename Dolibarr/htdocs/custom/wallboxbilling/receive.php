@@ -111,8 +111,11 @@ foreach (['rfid_hash', 'wallbox_id', 'start_time', 'end_time', 'kwh'] as $f) {
 $rfidHash  = $data['rfid_hash'];
 $wallboxId = $data['wallbox_id'];
 $kwh       = (float) $data['kwh'];
-$startTs   = strtotime($data['start_time']);
-$endTs     = strtotime($data['end_time']);
+// Mikrosekunden entfernen bevor strtotime() — Python isoformat() sendet .123456
+$startStr  = preg_replace('/\.\d+/', '', $data['start_time']);
+$endStr    = preg_replace('/\.\d+/', '', $data['end_time']);
+$startTs   = strtotime($startStr);
+$endTs     = strtotime($endStr);
 
 if (!preg_match('/^[a-f0-9]{64}$/i', $rfidHash)) {
     dol_syslog('wallboxbilling receive: invalid rfid_hash='.$rfidHash, LOG_WARNING);

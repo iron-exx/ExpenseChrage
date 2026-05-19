@@ -112,11 +112,22 @@ class WallboxApiClient:
                 url,
                 json=payload,
                 headers=self.headers,
-                timeout=self.timeout
+                timeout=self.timeout,
+                allow_redirects=False  # Kein HTTP→HTTPS Redirect der POST→GET macht
             )
 
             # HTTP 4xx/5xx prüfen
             response.raise_for_status()
+
+            # Response-Body prüfen (HTTP 200 ≠ immer Erfolg)
+            try:
+                body = response.json()
+                if body.get('success') is False and body.get('message') != 'Session already exists':
+                    error_msg = body.get('error', body.get('message', 'API returned success=false'))
+                    _LOGGER.error("API abgelehnt: %s", error_msg)
+                    return (False, error_msg)
+            except Exception:
+                pass  # Kein JSON-Body — HTTP-Statuscode reicht
 
             _LOGGER.info("Session erfolgreich übertragen: rfid_hash=%s..., kwh=%.3f",
                         payload["rfid_hash"][:16], payload["kwh"])
