@@ -67,6 +67,9 @@ class WallboxBillingCron extends CommonObject
         $typeId = $this->getOrCreateExpenseType();
         if ($typeId <= 0) {
             $this->error = "Spesenkategorie TK_ELE konnte nicht angelegt werden";
+            if (!empty($this->error_sql)) {
+                $this->error .= " (DB-Fehler: ".$this->error_sql.")";
+            }
             dol_syslog("WallboxBilling Error: ".$this->error, LOG_ERR);
             return -1;
         }
@@ -308,14 +311,21 @@ class WallboxBillingCron extends CommonObject
     {
         global $conf;
 
-        $sql = "SELECT rowid FROM ".MAIN_DB_PREFIX."c_type_fees"
-             . " WHERE code = 'TK_ELE' AND active = 1";
+        // ACHTUNG: llx_c_type_fees verwendet `id` als PK, nicht `rowid` wie
+        // andere Dolibarr-Tabellen. SELECT auf rowid würde "Unknown column"
+        // werfen und der SELECT-Pfad würde übersprungen → INSERT scheitert
+        // am UNIQUE-Constraint auf `code`.
+        $sql = "SELECT id, active FROM ".MAIN_DB_PREFIX."c_type_fees WHERE code = 'TK_ELE'";
         $res = $this->db->query($sql);
         if ($res && ($obj = $this->db->fetch_object($res))) {
-            return (int) $obj->rowid;
+            if ((int) $obj->active !== 1) {
+                $this->db->query("UPDATE ".MAIN_DB_PREFIX."c_type_fees SET active = 1 WHERE id = ".(int) $obj->id);
+                dol_syslog("WallboxBilling: TK_ELE (id=".(int)$obj->id.") reaktiviert", LOG_INFO);
+            }
+            return (int) $obj->id;
         }
 
-        // Anlegen
+        // Neu anlegen
         $sql = "INSERT INTO ".MAIN_DB_PREFIX."c_type_fees"
              . " (code, label, active)"
              . " VALUES ('TK_ELE', 'Stromkosten (Wallbox)', 1)";
@@ -323,6 +333,10 @@ class WallboxBillingCron extends CommonObject
             return (int) $this->db->last_insert_id(MAIN_DB_PREFIX."c_type_fees");
         }
 
+        // INSERT fehlgeschlagen — echte SQL-Fehlermeldung loggen + in $this->error speichern
+        $sqlErr = $this->db->lasterror();
+        dol_syslog("WallboxBilling: TK_ELE INSERT failed: ".$sqlErr." | SQL: ".$sql, LOG_ERR);
+        $this->error_sql = $sqlErr;
         return 0;
     }
 
