@@ -1,35 +1,16 @@
 # Wallbox Billing Sprachdatei (Deutsch)
-# Generiert: 2026-05-04
 
-WallboxbillingDescription=RFID-basierte Abrechnung von Wallbox-Ladevorgängen
-Wallboxbilling=EVCharge Wallbox Abrechnung
+WallboxbillingDescription=Schreibt Wallbox-Ladevorgänge direkt in die Spesenabrechnung des Mitarbeiters
+Wallboxbilling=Wallbox-Abrechnung
 WallboxBillingSetup=Wallbox-Abrechnung Konfiguration
 WallboxConfiguration=Wallbox Konfiguration
 DefaultPricePerKwh=Standardpreis pro kWh (€)
-Permissions=Berechtigungen
-Permission=Berechtigung
-Description=Beschreibung
-WallboxSessions=Wallbox Ladevorgänge
-WallboxId=Wallbox-ID
-LinkUserToRFID=Benutzer mit RFID verknüpfen
-MonthlyBilling=Monatliche Abrechnung
-ViewOwnSessions=Eigene Ladevorgänge ansehen
-ManageAllSessions=Alle Ladevorgänge verwalten
-CreateBilling=Abrechnungen erstellen
-SessionsWillBeDisplayedHere=Noch keine Ladevorgänge vorhanden.
-UserRFIDLinkWillBeHere=Hier können Benutzer mit RFID-Karten verknüpft werden.
-BillingPreviewWillBeHere=Noch keine Abrechnungen vorhanden.
 WallboxUserRFIDManagement=Benutzer-RFID-Verwaltung
 RFIDHex=RFID (Hex)
 RFIDHash=RFID-Hash (SHA-256)
 PricePerKWh=Preis pro kWh
-CostCenter=Kostenstelle
 RFIDHashSaved=RFID-Hash erfolgreich gespeichert.
 SetupSaved=Konfiguration gespeichert.
 Save=Speichern
 User=Benutzer
-Date=Datum
-Duration=Dauer
-Amount=Betrag
-Status=Status
-Month=Monat
+Action=Aktion

@@ -1,9 +1,15 @@
 <?php
 /**
- *  modWallboxbilling.class.php - Wallbox Billing Modul Descriptor
+ *  modWallboxbilling.class.php — Wallbox Billing Modul Descriptor
  *
- *  @author    Wallbox-Dolibarr Team
- *  @version   1.0.0
+ *  Schreibt RFID-basierte Wallbox-Ladevorgänge direkt als Positionen in
+ *  die Dolibarr-Spesenabrechnung des jeweiligen Mitarbeiters. Pro Monat
+ *  und Mitarbeiter wird automatisch ein Draft-Report erstellt oder ein
+ *  bestehender erweitert. RFID-Hashes werden SHA-256-gehasht persistiert
+ *  und sind Soft-Deletable für §147-AO-Aufbewahrungspflicht (10 Jahre).
+ *
+ *  @author    Wallbox-Dolibarr
+ *  @version   1.1.2
  */
 
 require_once DOL_DOCUMENT_ROOT.'/core/modules/DolibarrModules.class.php';

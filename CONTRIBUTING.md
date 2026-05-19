@@ -16,10 +16,10 @@ ln -s $(pwd)/wallboxbilling /var/www/html/htdocs/custom/
 
 ```bash
 # Python Abhängigkeiten
-pip install -r Homeassistant/requirements.txt
+pip install -r wallbox-dolibarr/requirements.txt
 
 # Lokal testen
-python3 Homeassistant/main.py --test
+python3 wallbox-dolibarr/main.py --test
 ```
 
 ## Code-Style
@@ -47,7 +47,7 @@ find . -name "*.php" -exec php -l {} \;
 
 ### Python Syntax prüfen
 ```bash
-python3 -m py_compile Homeassistant/*.py
+python3 -m py_compile wallbox-dolibarr/*.py
 ```
 
 ## Pull Requests

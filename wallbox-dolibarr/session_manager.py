@@ -209,37 +209,6 @@ class SessionManager:
 
         return active_sessions
 
-    def handle_recovered_session(self, session: Dict, wallbox_status: str = None) -> Dict:
-        """
-        Behandelt eine wiederhergestellte Session beim Neustart (PER-03)
-
-        Args:
-            session: Die wiederhergestelle Session
-            wallbox_status: Aktueller Wallbox-Status (falls verfügbar)
-
-        Returns:
-            Dict mit action und session
-        """
-        if wallbox_status in [None, 'Unknown']:
-            return {
-                'action': 'incomplete',
-                'session': session,
-                'reason': 'status_unknown'
-            }
-
-        if wallbox_status in ['Idle', 'Stopped']:
-            return {
-                'action': 'terminate',
-                'session': session,
-                'reason': 'wallbox_stopped'
-            }
-
-        return {
-            'action': 'continue',
-            'session': session,
-            'reason': 'still_charging'
-        }
-
     def mark_session_incomplete(self, session_id: int, reason: str = 'crash_recovery'):
         """
         Markiert eine Session als unvollständig (PER-03)

@@ -1,212 +1,131 @@
 # Wallbox-Dolibarr Integration
 
-RFID-basierte automatische Abrechnung von Wallbox-Ladevorgängen mit Home Assistant und Dolibarr.
+RFID-basierte Abrechnung von Wallbox-Ladevorgängen — Sessions werden vom Home-Assistant-Addon **direkt in die Dolibarr-Spesenabrechnung** des jeweiligen Mitarbeiters geschrieben.
 
-![Version](https://img.shields.io/badge/Version-1.0.0-blue)
-![Dolibarr](https://img.shields.io/badge/Dolibarr-21.x--22.x-green)
-![Python](https://img.shields.io/badge/Python-3.13+-green)
+![Version](https://img.shields.io/badge/Version-1.1.2-blue)
+![Dolibarr](https://img.shields.io/badge/Dolibarr-20.x--22.x-green)
+![Python](https://img.shields.io/badge/Python-3.12+-green)
+
+## Funktionsweise
+
+```
+┌─────────────────┐                ┌──────────────────────┐
+│  Home Assistant │   POST JSON    │      Dolibarr        │
+│  Addon (Python) │ ─────────────► │  receive.php (PHP)   │
+│                 │   DOLAPIKEY    │                      │
+│  - RFID-Reader  │                │  ① RFID→User Lookup  │
+│  - Energie-Zähl │                │  ② Spesenabrechnung  │
+│  - SQLite-Buffer│                │     des Monats       │
+│  - Retry-Loop   │                │     finden / anlegen │
+└─────────────────┘                │  ③ Zeile in          │
+                                   │     expensereport_det│
+                                   └──────────────────────┘
+```
+
+Jede Ladung landet sofort als Position im Spesenreport des Mitarbeiters. Pro Monat und Mitarbeiter wird automatisch ein Draft-Report erstellt oder ein bestehender erweitert. Es gibt **keinen Cronjob**, **keine eigene Sessions-Tabelle** und **keine separate Abrechnungsseite** — alles steckt nativ in Dolibarrs Spesenabrechnungsmodul.
 
 ## Features
 
 ### Home Assistant Addon
-- ⭐ RFID-Authentifizierung mit SHA-256 Hash
-- ⚡ Echtzeit-Session-Tracking
-- 🔄 API-Transmission an Dolibarr
-- 💾 SQLite mit WAL Mode für Crash-Recovery
-- 🔁 Automatischer Neustart bei Addon-Absturz
+- RFID-Authentifizierung mit SHA-256-Hash (kein Klartext-Speichern)
+- Whitelist-Prüfung + 7s-Debounce gegen Doppellesungen
+- Multi-Wallbox-Support
+- SQLite-Buffer mit WAL-Mode für Crash-Recovery
+- Restart-Recovery: laufende Sessions werden beim Neustart behandelt
+- Auto-Retry mit Exponential-Backoff bei API-Fehlern
+- Web-UI (Ingress): manuelle Sessions, History, CSV-Export
 
-### Dolibarr Modul
-- 👥 User-Management mit RFID-Hash
-- 📊 Monatliche automatische Abrechnung (Cron-Job)
-- 📄 PDF-Rechnungen via TCPDF
-- 📁 CSV-Export für externe Analyse
-- 🇩🇪 DATEV EXTF Format für deutsche Buchhaltung
-- 🔌 REST-API Endpoint für HA-Addon
-
-## Systemübersicht
-
-```
-┌─────────────────┐     REST API      ┌─────────────────┐
-│  Home Assistant │ ─────────────────► │    Dolibarr     │
-│  Addon (Python) │                   │  Module (PHP)   │
-│                 │                   │                 │
-│  - Websocket    │   JSON (SHA-256)  │  - User mgmt    │
-│  - RFID Track   │                   │  - Billing      │
-│  - Session mgr  │                   │  - Invoicing    │
-└─────────────────┘                   └─────────────────┘
-```
+### Dolibarr-Modul
+- Direkter Insert in `llx_expensereport` / `llx_expensereport_det` als Spesentyp `TK_ELE`
+- **Multi-RFID pro Mitarbeiter**: beliebig viele Karten pro Benutzer
+- Pro-User-Preis (€/kWh) oder Default
+- Duplikat-Schutz via Marker `[wbx:HASH:UNIXTS]` in Comments-Feld
+- **Soft-Delete für RFID-Mapping** (§147 AO, 10 Jahre Aufbewahrungspflicht): deaktivierte Karten bleiben in der Historie nachvollziehbar
+- DOLAPIKEY-Auth, SHA-256-Hash-kompatibel (Dolibarr 20+)
 
 ## Voraussetzungen
 
-| Komponente | Version | Anmerkung |
-|------------|---------|-----------|
-| Home Assistant | 2024.x+ | Mit Supervisor/Addon |
-| Dolibarr | 21.x - 22.x | Mit TCPDF Modul |
-| SQLite | 3.x | (im HA Addon enthalten) |
-| Python | 3.13+ | (im HA Container) |
+| Komponente | Version |
+|---|---|
+| Dolibarr | 20.x – 22.x |
+| Home Assistant | 2024.x+ mit Supervisor |
+| Python | 3.12+ (im HA-Container) |
 
-## Installation
+## Schnellinstallation
 
-### 1. Dolibarr Modul installieren
+### 1. Dolibarr-Modul
 
-```bash
-# Modul in Dolibarr htdocs/custom/ kopieren
-cp -r wallboxbilling /var/www/html/htdocs/custom/
+1. `module_wallboxbilling-1.1.2.zip` im Dolibarr-Modulmanager hochladen
+2. Modul **aktivieren**
+3. Unter „Wallbox-Abrechnung Konfiguration":
+   - Default-Preis pro kWh setzen
+   - RFID-Karten pro Mitarbeiter zuordnen
 
-# Oder via Symlink falls Dolibarr woanders liegt
-ln -s /path/to/wallboxbilling /var/www/html/htdocs/custom/wallboxbilling
-```
-
-**Im Dolibarr Admin:**
-1. Gehe zu *Setup → Modules → Interfaces*
-2. Suche nach "Wallbox-Abrechnung"
-3. Klicke auf "Aktivieren"
-
-Das Modul erstellt automatisch:
-- `llx_wallbox_sessions` – Lade-Sessions
-- `llx_wallbox_rfid` – RFID-Zuordnungen
-- `llx_wallbox_billing_history` – Abrechnungshistorie
+Verify: `https://<dolibarr>/custom/wallboxbilling/receive.php` → muss `{"version":"1.1.2","mode":"direct-to-expensereport"}` zeigen.
 
 ### 2. Home Assistant Addon
 
-```bash
-# Addon-Dateien nach /addons kopieren
-mkdir -p /addons/local/wallbox_dolibarr
-cp -r Homeassistant/* /addons/local/wallbox_dolibarr/
-```
+1. Repository hinzufügen: `https://github.com/iron-exx/evcharge-dolibarr-invoice`
+2. Addon „Wallbox Dolibarr Invoice" installieren
+3. Konfiguration:
+   ```yaml
+   wallbox_id: meine_wallbox
+   rfid_whitelist:
+     - "EFCD083E"
+   dolibarr_url: "https://erp.example.com"
+   api_token: "<DOLAPIKEY>"
+   sensor_rfid: sensor.alfen_eve_tag_socket_1
+   sensor_energy: sensor.alfen_energy_total
+   sensor_state: sensor.alfen_eve_display_state_socket_1
+   ```
 
-**In Home Assistant:**
-1. *Settings → Add-ons → Add-on Store*
-2.右上角 → "Add local repository"
-3. Pfad: `/addons/local/wallbox_dolibarr`
-4. Addon installieren und starten
+## Datenfluss im Detail
 
-## Konfiguration
+1. **RFID gelesen**: HA-Sensor triggert
+2. **Whitelist + Debounce**: 7-Sekunden-Sperre gegen Doppellesungen
+3. **Session starten**: lokale SQLite speichert `start_time` + `start_energy_kwh`
+4. **Session beenden**: bei Status-Wechsel `Charging → Idle` wird `end_time` + `end_energy_kwh` ermittelt, `total_kwh = end − start`
+5. **Transmit** (alle 5 min oder sofort):
+   - POST an `receive.php` mit `{rfid_hash, wallbox_id, start_time, end_time, kwh}`
+   - PHP-Endpoint: RFID→User → Spesenabrechnung suchen/anlegen → Zeile rein
+   - Bei Erfolg: `transmitted_at` lokal gesetzt
+   - Bei `RFID_NOT_MAPPED` (422): Admin muss erst Mapping machen, Addon retried automatisch
+   - Bei `RFID_INACTIVE` (422): Karte wurde deaktiviert, Admin muss reaktivieren
 
-### Dolibarr API Token erstellen
+## Sicherheit & Compliance
 
-1. *Setup → Users → Benutzer wählen*
-2. *Allow API access* aktivieren
-3. API-Token kopieren (DOLAPIKEY)
+- ✅ RFID nur als SHA-256-Hash persistiert (Datensparsamkeit, DSGVO)
+- ✅ DOLAPIKEY-Auth (token-basiert, im HA-Secret)
+- ✅ SQL-Injection-Schutz via `$db->escape()`
+- ✅ Soft-Delete der RFID-Mappings → Aufbewahrungspflicht §147 AO (10 Jahre)
+- ✅ Spesenabrechnungen unterliegen Dolibarrs Standard-Audit-Trail
+- ✅ Modul-Deinstallation droppt **keine** aufbewahrungspflichtigen Tabellen
 
-### HA Addon config.yaml
-
-```yaml
-log_level: "INFO"
-
-# RFID-Whitelist (Hex-Strings, SHA-256 wird intern berechnet)
-rfid_whitelist:
-  - "EFCD083E"
-  - "A1B2C3D4"
-
-# Wallbox-Konfiguration (optional - mehrere möglich)
-wallboxes:
-  - id: "alfen_eve"
-    name: "Alfen Eve"
-    enabled: true
-    default: true
-
-# Dolibarr API
-api:
-  dolibarr_url: "https://doli.meinedomain.de"
-  api_token: "your_dolapikey_here"
-  transmit_interval: 300  # Sekunden
-  timeout: 30
-```
-
-## Funktionsweise
-
-### Session-Tracking (HA)
-
-1. RFID wird an der Wallbox gelesen
-2. SHA-256 Hash wird gebildet
-3. Whitelist-Prüfung (7s Debounce)
-4. Session in SQLite gestartet
-5. Bei Ladeende: Session beendet, an Dolibarr übertragen
-
-### Abrechnung (Dolibarr)
-
-1. Cron-Job läuft monatlich (1. des Monats)
-2. Sessions nach User gruppiert
-3. Kosten berechnet: kWh × Preis/kWh
-4. PDF-Rechnung generiert
-5. In Billing History gespeichert
-
-## DATEV Export
-
-```php
-$config = array(
-    'berater_nr' => '12345',
-    'mandanten_nr' => '001',
-    'buchungskreis' => '00'
-);
-
-$export->generateDatev($billings, '/path/to/export.csv', $config);
-```
-
-**Format:** EXTF 5.0
-- Debitorenkonto: `1xxxxx` (10000 + User-ID)
-- Umsatzkonto: `1400`
-- Beträge in Cent
-
-## Entwicklung
-
-### Projektstruktur
+## Projektstruktur
 
 ```
 Wallbox-Dolibarr/
-├── wallboxbilling/          # Dolibarr Modul
-│   ├── class/              # PHP Klassen
-│   │   ├── billing.class.php
-│   │   ├── export.class.php
-│   │   └── wallboxbilling.class.php
-│   ├── core/
-│   │   ├── modules/
-│   │   │   ├── modWallboxbilling.class.php
-│   │   │   └── doc/pdf_wallboxbilling.class.php
-│   │   └── modules/modWallboxbilling.class.php
-│   ├── api/
-│   ├── sql/
-│   └── langs/
-├── Homeassistant/           # HA Addon
-│   ├── main.py             # Hauptskript
-│   ├── session_manager.py  # Session-Tracking
-│   ├── api_client.py       # Dolibarr API
-│   ├── config.yaml         # Addon-Konfiguration
+├── Dolibarr/htdocs/custom/wallboxbilling/   # Dolibarr-Modul
+│   ├── receive.php                          # POST-Endpoint
+│   ├── admin/setup.php                      # Konfiguration + RFID-Verwaltung
+│   ├── core/modules/modWallboxbilling.class.php
+│   ├── lib/wallboxbilling.lib.php
+│   └── langs/                               # de_DE, en_US
+├── wallbox-dolibarr/                        # HA-Addon
+│   ├── main.py                              # Hauptloop + Websocket
+│   ├── session_manager.py                   # SQLite + RFID
+│   ├── api_client.py                        # Dolibarr POST
+│   ├── web_server.py                        # Ingress UI
+│   ├── utils/hash.py                        # SHA-256
 │   ├── Dockerfile
-│   └── utils/
-│       └── hash.py         # SHA-256 RFID
-└── README.md
+│   └── config.yaml
+└── module_wallboxbilling-1.1.2.zip          # aktuelles Dolibarr-Modul
 ```
-
-### PHP Tests (Dolibarr)
-
-```bash
-cd htdocs/custom/wallboxbilling
-php -l class/billing.class.php
-php -l class/export.class.php
-```
-
-### Python Tests (HA)
-
-```bash
-cd Homeassistant
-python3 -m py_compile session_manager.py
-python3 -m py_compile api_client.py
-```
-
-## Sicherheit
-
-- ✅ RFID wird nur als SHA-256 Hash gespeichert
-- ✅ API-Auth via DOLAPIKEY Token
-- ✅ SQL-Injection geschützt via Prepared Statements
-- ✅ Keine PII in öffentlichen Verzeichnissen
 
 ## Lizenz
 
-MIT License -siehe LICENSE Datei
+MIT — siehe `LICENSE`.
 
 ## Support
 
-- GitHub Issues: https://github.com/dein-repo/wallbox-dolibarr/issues
-- Dokumentation: https://doku.wiki/wallbox-dolibarr
+GitHub: [iron-exx/evcharge-dolibarr-invoice](https://github.com/iron-exx/evcharge-dolibarr-invoice)

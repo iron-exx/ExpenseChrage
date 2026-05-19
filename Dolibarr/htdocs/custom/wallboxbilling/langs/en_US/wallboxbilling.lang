@@ -1,34 +1,16 @@
 # Wallbox Billing language file (English)
 
-WallboxbillingDescription=RFID-based billing for EV wallbox charging sessions
-Wallboxbilling=EVCharge Wallbox Invoice
+WallboxbillingDescription=Writes wallbox charging sessions directly into the employee's expense report
+Wallboxbilling=Wallbox Billing
 WallboxBillingSetup=Wallbox Billing Setup
 WallboxConfiguration=Wallbox Configuration
 DefaultPricePerKwh=Default price per kWh (€)
-Permissions=Permissions
-Permission=Permission
-Description=Description
-WallboxSessions=Wallbox Charging Sessions
-LinkUserToRFID=Link User to RFID Card
-MonthlyBilling=Monthly Billing
-ViewOwnSessions=View own charging sessions
-ManageAllSessions=Manage all charging sessions
-CreateBilling=Create billing and invoices
-SessionsWillBeDisplayedHere=Charging sessions will be displayed here.
-UserRFIDLinkWillBeHere=User RFID card assignments will be managed here.
-BillingPreviewWillBeHere=Monthly billing preview will be shown here.
 WallboxUserRFIDManagement=User RFID Card Management
 RFIDHex=RFID (Hex)
 RFIDHash=RFID Hash (SHA-256)
 PricePerKWh=Price per kWh
-CostCenter=Cost Center
 RFIDHashSaved=RFID hash saved successfully.
 SetupSaved=Configuration saved.
 Save=Save
 User=User
-Date=Date
-Duration=Duration
-Amount=Amount
-Status=Status
-Month=Month
-WallboxId=Wallbox ID
+Action=Action

@@ -252,36 +252,12 @@ async def check_startup_session():
     if recovered_sessions:
         _LOGGER.info("=== Startup Recovery: %d aktive Sessions gefunden ===", len(recovered_sessions))
 
+        # Aktive Sessions beim Neustart werden grundsätzlich als unvollständig
+        # markiert — wir kennen den realen Wallbox-Status nicht mehr. Die
+        # nächste echte Ladung erzeugt eine neue, saubere Session.
         for session in recovered_sessions:
-            wallbox_status = None
-
-            # Versuche Wallbox-Status zu ermitteln (wenn API verfügbar)
-            if api_client:
-                try:
-                    status_result = api_client.get_wallbox_status(session['wallbox_id'])
-                    if status_result and 'status' in status_result:
-                        wallbox_status = status_result['status']
-                except Exception as e:
-                    _LOGGER.warning("Konnte Wallbox-Status nicht abfragen: %s", e)
-
-            # Recovery-Entscheidung treffen (PER-03)
-            result = session_manager.handle_recovered_session(session, wallbox_status)
-
-            _LOGGER.info("Session %d: %s (%s)", session['id'], result['action'], result['reason'])
-
-            if result['action'] == 'terminate':
-                # Session war schon beendet - als unvollständig markieren
-                session_manager.mark_session_incomplete(session['id'], result['reason'])
-                _LOGGER.warning("Session %d als unvollständig markiert (Wallbox gestoppt)", session['id'])
-
-            elif result['action'] == 'incomplete':
-                # Status unbekannt - als unvollständig markieren
-                session_manager.mark_session_incomplete(session['id'], result['reason'])
-                _LOGGER.warning("Session %d als unvollständig markiert (Status unbekannt)", session['id'])
-
-            elif result['action'] == 'continue':
-                # Session wird fortgesetzt - läuft weiter
-                _LOGGER.info("Session %d wird fortgesetzt (Wallbox noch aktiv)", session['id'])
+            session_manager.mark_session_incomplete(session['id'], 'restart_recovery')
+            _LOGGER.warning("Session %d als unvollständig markiert (Addon-Neustart)", session['id'])
 
         _LOGGER.info("=== Startup Recovery abgeschlossen ===")
     else:
