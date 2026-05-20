@@ -12,6 +12,7 @@ import logging
 import os
 import sys
 import yaml
+from datetime import datetime
 from typing import Dict, Any, Optional
 
 # Hash-Utility importieren
@@ -49,6 +50,7 @@ session_manager = None
 current_config = {}
 ha_ws = None
 api_client = None
+api_state = None  # Live-Zustand für Web-Server (current_energy, wallbox_state)
 
 
 def load_config():
@@ -173,13 +175,25 @@ class HomeAssistantWebsocket:
 
 async def sensor_callback(entity_id: str, state: Dict[str, Any]):
     """Callback für Sensor-Updates mit Session-Tracking (D-09, D-10, HA-03-HA-07)"""
-    global session_manager, current_config, ha_ws
+    global session_manager, current_config, ha_ws, api_state
 
     sensor_rfid   = current_config.get('sensor_rfid',   _DEFAULT_SENSOR_RFID)
     sensor_energy = current_config.get('sensor_energy', _DEFAULT_SENSOR_ENERGY)
     sensor_state  = current_config.get('sensor_state', '') or ''
 
     state_value = state.get('state')
+
+    # Live-State pflegen für Web-Server (zeigt laufenden Ladevorgang)
+    if api_state is not None:
+        if entity_id == sensor_energy:
+            try:
+                api_state['current_energy'] = float(state_value)
+                api_state['last_update'] = datetime.now().isoformat(timespec='seconds')
+            except (TypeError, ValueError):
+                pass
+        elif sensor_state and entity_id == sensor_state:
+            api_state['wallbox_state'] = state_value
+            api_state['last_update'] = datetime.now().isoformat(timespec='seconds')
 
     # RFID Sensor (HA-03, HA-04, HA-07)
     if entity_id == sensor_rfid:
@@ -266,7 +280,7 @@ async def check_startup_session():
 
 async def main():
     """Hauptschleife (D-03, D-10, D-11) - erweitert für Session-Tracking und API-Transmission"""
-    global session_manager, current_config, ha_ws, api_client
+    global session_manager, current_config, ha_ws, api_client, api_state
 
     _LOGGER.info("Wallbox-Dolibarr Addon startet...")
 
@@ -278,7 +292,14 @@ async def main():
 
     # API Client initialisieren — flat config (dolibarr_url auf Top-Level)
     api_client = None
-    api_state  = {'client': None}   # mutable — wird an Web-Server weitergegeben
+    # api_state: gemeinsamer Live-Zustand, wird vom Sensor-Callback aktualisiert
+    # und vom Web-Server für die Live-Anzeige laufender Sessions gelesen.
+    api_state  = {
+        'client': None,
+        'current_energy': None,    # aktueller Energiezähler-Stand in kWh
+        'wallbox_state': None,     # 'Charging' / 'Idle' / 'Stopped' / None
+        'last_update': None,       # ISO-Timestamp der letzten Sensor-Aktualisierung
+    }
     dolibarr_url = current_config.get("dolibarr_url", "")
     api_token    = current_config.get("api_token", "")
     if dolibarr_url and dolibarr_url != "https://dolibarr.example.com" and api_token:

@@ -111,6 +111,7 @@ def _nav(active):
     # Relative URLs — absoluter Pfad würde HA-eigene Seiten öffnen
     return (
         f'<a href="./" class="{"active" if active == "form" else ""}">⚡ Erfassen</a>'
+        f'<a href="live" class="{"active" if active == "live" else ""}">🔴 Live</a>'
         f'<a href="history" class="{"active" if active == "history" else ""}">📋 Verlauf</a>'
     )
 
@@ -154,6 +155,32 @@ def _db_months(db_path):
 def _month_name(month):
     names = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez']
     return names[month - 1]
+
+def _db_active_sessions(db_path):
+    """Alle laufenden Sessions (status='active') aus SQLite"""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT id, rfid_hash, wallbox_id, start_time, start_energy_kwh
+        FROM sessions
+        WHERE status = 'active'
+        ORDER BY start_time ASC
+    """)
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+def _fmt_duration(seconds):
+    """Sekunden → 'Hh Mm Ss' oder 'Mm Ss'"""
+    if seconds is None or seconds < 0:
+        return '–'
+    s = int(seconds)
+    h, rem = divmod(s, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f'{h}h {m:02d}m {s:02d}s'
+    return f'{m}m {s:02d}s'
 
 # ---------------------------------------------------------------------------
 # Seiten-Builder
@@ -293,6 +320,97 @@ def _build_history_page(session_manager, year, month, base_href=''):
 
     return _base(_nav('history'), content, base_href)
 
+
+def _build_live_page(session_manager, api_state, base_href=''):
+    """Live-Ansicht laufender Lade-Sessions mit Fortschritt (Auto-Refresh 5s)"""
+    active = _db_active_sessions(session_manager.db_path)
+
+    current_energy = api_state.get('current_energy') if api_state else None
+    wallbox_state  = api_state.get('wallbox_state')  if api_state else None
+    last_update    = api_state.get('last_update')    if api_state else None
+
+    # Sensor-Status-Banner
+    if current_energy is None:
+        sensor_banner = (
+            '<div class="msg err" style="margin-bottom:14px">'
+            'Kein aktueller Energie-Wert vom HA-Sensor. '
+            'Prüfe sensor_energy in der Addon-Konfiguration.'
+            '</div>'
+        )
+    else:
+        state_chip = ''
+        if wallbox_state:
+            color = {'Charging': '#2e7d32', 'Idle': '#999', 'Stopped': '#c0392b'}.get(wallbox_state, '#999')
+            state_chip = f'<span style="background:{color};color:#fff;padding:2px 8px;border-radius:3px;font-size:12px">{wallbox_state}</span>'
+        sensor_banner = (
+            f'<div class="msg ok" style="margin-bottom:14px">'
+            f'Zähler aktuell: <strong>{current_energy:.3f} kWh</strong> {state_chip}'
+            f'<span style="float:right;color:#666;font-size:12px">'
+            f'Sensor zuletzt: {last_update or "—"}</span>'
+            f'</div>'
+        )
+
+    if not active:
+        body = (
+            '<div style="text-align:center;padding:40px;color:#888">'
+            '<div style="font-size:48px;margin-bottom:8px">⚡</div>'
+            '<div>Aktuell läuft kein Ladevorgang.</div>'
+            '<div style="font-size:13px;margin-top:6px">'
+            'Sobald eine RFID-Karte an die Wallbox gehalten wird, '
+            'erscheint die Session hier in Echtzeit.</div>'
+            '</div>'
+        )
+    else:
+        now = datetime.now()
+        rows_html = ''
+        for s in active:
+            try:
+                start_dt = datetime.fromisoformat(s['start_time'])
+            except (ValueError, TypeError):
+                start_dt = now
+            elapsed = (now - start_dt).total_seconds()
+
+            start_energy = float(s.get('start_energy_kwh') or 0.0)
+            if current_energy is not None and current_energy >= start_energy:
+                kwh_delta = current_energy - start_energy
+                kwh_str   = f'{kwh_delta:.3f} kWh'
+            else:
+                kwh_str = '—'
+
+            rfid_prefix = (s.get('rfid_hash') or '')[:16] + '…'
+            wallbox     = s.get('wallbox_id') or '—'
+            start_str   = start_dt.strftime('%d.%m.%Y %H:%M:%S')
+
+            rows_html += f"""
+  <div style="border:1px solid #e0e0e0;border-radius:6px;padding:14px;margin-bottom:10px;
+              background:#fff;border-left:4px solid #2e7d32">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div>
+        <div style="font-size:12px;color:#666">Session #{s['id']} · {wallbox}</div>
+        <code style="font-size:13px">{rfid_prefix}</code>
+      </div>
+      <div style="font-size:24px;font-weight:bold;color:#2e7d32">{kwh_str}</div>
+    </div>
+    <div style="display:flex;gap:24px;font-size:13px;color:#555">
+      <div><b>Start:</b> {start_str}</div>
+      <div><b>Dauer:</b> {_fmt_duration(elapsed)}</div>
+      <div><b>Start-Zählerstand:</b> {start_energy:.3f} kWh</div>
+    </div>
+  </div>"""
+        body = rows_html
+
+    content = f"""
+<div class="card">
+  <h2>🔴 Laufende Ladevorgänge</h2>
+  {sensor_banner}
+  {body}
+  <div style="text-align:center;color:#888;font-size:11px;margin-top:12px">
+    Auto-Refresh alle 5 Sekunden
+  </div>
+</div>
+<meta http-equiv="refresh" content="5">"""
+    return _base(_nav('live'), content, base_href)
+
 # ---------------------------------------------------------------------------
 # App-Factory
 # ---------------------------------------------------------------------------
@@ -430,10 +548,19 @@ def create_app(session_manager, config, api_state):
             headers={'Content-Disposition': f'attachment; filename="{filename}"'}
         )
 
+    # -- GET /live ------------------------------------------------------------
+    async def handle_live(request):
+        base_href = request.headers.get('X-Ingress-Path', '').rstrip('/')
+        return web.Response(
+            text=_build_live_page(session_manager, api_state, base_href=base_href),
+            content_type='text/html'
+        )
+
     app = web.Application()
     app.router.add_get('/',          handle_get)
     app.router.add_post('/',         handle_post)
     app.router.add_post('/transmit', handle_transmit)
+    app.router.add_get('/live',      handle_live)
     app.router.add_get('/history',   handle_history)
     app.router.add_get('/export',    handle_export)
     return app
