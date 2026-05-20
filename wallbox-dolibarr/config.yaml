@@ -1,6 +1,6 @@
 name: "Wallbox Dolibarr Invoice"
-description: "Schreibt Wallbox-Ladevorgänge direkt in die Dolibarr-Spesenabrechnung des Mitarbeiters"
-version: "1.2.0"
+description: "Schreibt RFID-Ladevorgänge der Alfen Eve Wallbox direkt als Position in die Dolibarr-Spesenabrechnung des jeweiligen Mitarbeiters"
+version: "1.2.1"
 slug: "wallbox-dolibarr"
 url: "https://github.com/iron-exx/evcharge-dolibarr-invoice"
 init: false
@@ -21,9 +21,9 @@ options:
   dolibarr_url: "https://dolibarr.example.com"
   api_token: ""
   transmit_interval: 300
-  sensor_rfid: "sensor.alfen_eve_tag_socket_1"
-  sensor_energy: "sensor.alfen_energy_total"
-  sensor_state: "sensor.alfen_eve_display_state_socket_1"
+  sensor_rfid:   "sensor.alfen_eve_tag_socket_1"
+  sensor_energy: "sensor.alfen_eve_meter_reading_socket_1"
+  sensor_state:  "sensor.alfen_eve_main_state_socket_1"
 
 schema:
   log_level: "list(DEBUG|INFO|WARNING|ERROR)"

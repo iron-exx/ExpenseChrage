@@ -19,11 +19,6 @@ import sys
 sys.path.insert(0, '/usr/local/bin')
 from utils.hash import hash_rfid, verify_rfid_hash
 
-# Status-Konstanten (D-16)
-CHARGING = "Charging"
-IDLE = "Idle"
-STOPPED = "Stopped"
-
 # Debounce-Zeit in Sekunden (HA-07)
 DEBOUNCE_SECONDS = 7
 

@@ -2,8 +2,22 @@
 """
 Wallbox-Dolibarr Addon Hauptskript
 
-Verbindet sich via Websocket API mit Home Assistant Core,
-liest Alfen Wallbox Sensoren aus und implementiert Session-Tracking.
+Verbindet sich via Websocket API mit Home Assistant Core, abonniert die
+drei Alfen-Eve-Sensoren (RFID-Tag, Zählerstand, Wallbox-Status) und
+schreibt jede abgeschlossene Lade-Session direkt in die Dolibarr-
+Spesenabrechnung des zugeordneten Mitarbeiters.
+
+Datenfluss (Alfen Eve):
+  sensor.alfen_eve_tag_socket_1            → RFID-Karte (z.B. "A1B2C3D4" / "No Tag")
+  sensor.alfen_eve_meter_reading_socket_1  → Gesamt-Zählerstand kWh (kumulativ)
+  sensor.alfen_eve_main_state_socket_1     → Wallbox-Status ("Available",
+                                              "Charging Power On", "Finishing", …)
+
+Session-Logik:
+  • RFID-Wechsel auf bekannten Tag        → Session START
+  • State-Wechsel auf "Available"/"Finishing"/"Stopped"/…  → Session ENDE
+  • RFID-Wechsel auf "No Tag" (Karte ab)  → Session ENDE (Fallback)
+  • Geladen = Zähler_END − Zähler_START
 """
 import asyncio
 import aiohttp
@@ -20,7 +34,7 @@ sys.path.insert(0, '/usr/local/bin')
 from utils.hash import hash_rfid
 
 # Session Manager importieren
-from session_manager import SessionManager, CHARGING, IDLE, STOPPED
+from session_manager import SessionManager
 
 # API Client importieren (Phase 3)
 from api_client import WallboxApiClient
@@ -36,14 +50,35 @@ logging.basicConfig(
 )
 _LOGGER = logging.getLogger(__name__)
 
-# Status-Konstanten (D-16)
-CHARGING = "Charging"
-IDLE = "Idle"
-STOPPED = "Stopped"
-
-# Alfen Sensoren — Standardwerte (überschreibbar in Addon-Konfiguration)
+# Alfen-Sensor-Standardwerte (überschreibbar in Addon-Konfiguration)
 _DEFAULT_SENSOR_RFID   = "sensor.alfen_eve_tag_socket_1"
-_DEFAULT_SENSOR_ENERGY = "sensor.alfen_energy_total"
+_DEFAULT_SENSOR_ENERGY = "sensor.alfen_eve_meter_reading_socket_1"
+_DEFAULT_SENSOR_STATE  = "sensor.alfen_eve_main_state_socket_1"
+
+# RFID-Werte die als "keine Karte" interpretiert werden
+_RFID_NONE_VALUES = {'', 'no tag', 'no_tag', 'none', 'unknown', 'unavailable'}
+
+# Wallbox-Status: substring-Match (case-insensitive) gegen den echten Sensor-Wert.
+# Alfen-Wallbox-States: "Available", "Preparing", "Charging Power On",
+# "Charging Stopped", "Suspended EV", "Suspended EVSE", "Finishing",
+# "Reserved", "Unavailable", "Faulted". Wir gruppieren nach Verhalten:
+def _is_charging_state(s):
+    """True wenn die Wallbox aktiv lädt (Energie fließt)."""
+    if not s:
+        return False
+    sl = s.lower()
+    return 'charging' in sl and 'stopped' not in sl
+
+def _is_idle_state(s):
+    """True wenn die Wallbox keine Session mehr aktiv hat (Ladung abgeschlossen,
+    Stecker raus oder Karte entfernt)."""
+    if not s:
+        return False
+    sl = s.lower()
+    return any(k in sl for k in [
+        'available', 'idle', 'finished', 'finishing', 'stopped',
+        'disconnected', 'unavailable', 'faulted'
+    ])
 
 # Globale Variablen für Session-Tracking
 session_manager = None
@@ -173,17 +208,45 @@ class HomeAssistantWebsocket:
         _LOGGER.info("Verbindung getrennt")
 
 
+async def _end_active_session(reason: str):
+    """Beendet die aktive Session mit dem aktuellen Energie-Zählerstand."""
+    sensor_energy = current_config.get('sensor_energy', _DEFAULT_SENSOR_ENERGY)
+    energy_state  = await ha_ws.get_state(sensor_energy)
+    try:
+        end_energy = float(energy_state.get('state', 0)) if energy_state else 0.0
+    except (ValueError, TypeError):
+        end_energy = 0.0
+
+    completed = session_manager.end_session(end_energy)
+    if completed:
+        _LOGGER.info("Ladevorgang beendet (%s): Session #%s, %.3f kWh",
+                     reason, completed['id'], completed['total_kwh'])
+    return completed
+
+
 async def sensor_callback(entity_id: str, state: Dict[str, Any]):
-    """Callback für Sensor-Updates mit Session-Tracking (D-09, D-10, HA-03-HA-07)"""
+    """
+    Callback für Sensor-Updates mit Session-Tracking.
+
+    Alfen-Wallbox-Datenfluss:
+      1. RFID-Sensor wechselt auf eine Tag-ID (z.B. "A1B2C3D4")
+         → ggf. Session starten (wenn whitelisted und keine aktive läuft).
+      2. State-Sensor wechselt zu "Charging Power On" → Energie fließt,
+         Live-Zustand wird aktualisiert.
+      3. State-Sensor wechselt zu "Available" / "Finishing" / "Stopped"
+         → Session beenden (Energie-Delta = end − start).
+      4. Alternativ: RFID wechselt auf "No Tag" → ebenfalls Session beenden
+         (Karte abgezogen ohne State-Wechsel, z.B. bei Abbruch).
+    """
     global session_manager, current_config, ha_ws, api_state
 
     sensor_rfid   = current_config.get('sensor_rfid',   _DEFAULT_SENSOR_RFID)
     sensor_energy = current_config.get('sensor_energy', _DEFAULT_SENSOR_ENERGY)
-    sensor_state  = current_config.get('sensor_state', '') or ''
+    sensor_state  = current_config.get('sensor_state',  _DEFAULT_SENSOR_STATE)
 
     state_value = state.get('state')
 
-    # Live-State pflegen für Web-Server (zeigt laufenden Ladevorgang)
+    # ----- Live-State für Web-Server pflegen --------------------------------
     if api_state is not None:
         if entity_id == sensor_energy:
             try:
@@ -191,69 +254,71 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
                 api_state['last_update'] = datetime.now().isoformat(timespec='seconds')
             except (TypeError, ValueError):
                 pass
-        elif sensor_state and entity_id == sensor_state:
+        elif entity_id == sensor_state:
             api_state['wallbox_state'] = state_value
             api_state['last_update'] = datetime.now().isoformat(timespec='seconds')
 
-    # RFID Sensor (HA-03, HA-04, HA-07)
+    # ----- RFID-Sensor (Session-Start / Karte abgezogen) --------------------
     if entity_id == sensor_rfid:
-        if state_value and state_value != 'unknown':
-            # Debouncing prüfen (HA-07)
-            if not session_manager.debounce_rfid(state_value):
-                return  # RFID debounced, ignorieren
+        sv = (state_value or '').strip()
+        sv_low = sv.lower()
 
-            # RFID Whitelist prüfen (HA-02, HA-04)
-            whitelist = current_config.get('rfid_whitelist', [])
-            if not session_manager.is_rfid_authorized(state_value, whitelist):
-                rfid_hash = hash_rfid(state_value)
-                _LOGGER.warning("Nicht autorisierte RFID: %s...", rfid_hash[:16])
-                return
+        # "No Tag" / unknown → Karte entfernt: aktive Session beenden
+        if sv_low in _RFID_NONE_VALUES:
+            if session_manager.get_active_session():
+                await _end_active_session('rfid_removed')
+            return
 
-            # Energie-Stand für Session-Start abfragen (PER-05: atomar)
-            energy_state = await ha_ws.get_state(sensor_energy)
-            start_energy = float(energy_state.get('state', 0)) if energy_state else 0.0
+        # Echter Tag erkannt
+        if not session_manager.debounce_rfid(sv):
+            return  # zu schnell hintereinander gelesen — ignorieren
 
-            # Session starten (HA-03, HA-04)
-            session_id = session_manager.start_session(state_value, start_energy)
-            if session_id:
-                _LOGGER.info("Ladevorgang gestartet: Session ID=%s", session_id)
-        else:
-            _LOGGER.debug("RFID Sensor unbekannt oder leer")
+        whitelist = current_config.get('rfid_whitelist', [])
+        if not session_manager.is_rfid_authorized(sv, whitelist):
+            _LOGGER.warning("Nicht autorisierte RFID: %s... (Whitelist-Eintrag fehlt)",
+                            hash_rfid(sv)[:16])
+            return
 
-    # Energie Sensor (HA-06)
-    elif entity_id == sensor_energy:
+        # Energie-Zähler atomar lesen für Start-Wert
+        energy_state = await ha_ws.get_state(sensor_energy)
         try:
-            kwh = float(state_value) if state_value else 0.0
-
-            # Wenn aktive Session, prüfen ob Wallbox noch lädt
-            active_session = session_manager.get_active_session()
-            if active_session:
-                # Status der Wallbox abfragen (HA-05)
-                # Annahme: Charging State wird über separaten Sensor ermittelt
-                # oder über Energie-Änderung (vereinfacht)
-                _LOGGER.debug("Aktive Session: ID=%s, Aktuelle Energie=%.2f kWh",
-                             active_session['id'], kwh)
+            start_energy = float(energy_state.get('state', 0)) if energy_state else 0.0
         except (ValueError, TypeError):
-            _LOGGER.warning("Ungültiger Energie-Wert: %s", state_value)
+            start_energy = 0.0
 
-    # Ladezustand — konfigurierter Sensor oder Fallback auf Fuzzy-Match (HA-05)
-    elif (sensor_state and entity_id == sensor_state) or \
-         (not sensor_state and ('charging' in entity_id.lower() or 'state' in entity_id.lower())):
-        active_session = session_manager.get_active_session()
+        wallbox_id = current_config.get('wallbox_id', 'wallbox')
+        session_id = session_manager.start_session(sv, start_energy, wallbox_id=wallbox_id)
+        if session_id:
+            _LOGGER.info("Ladevorgang gestartet: Session #%s, Start-Zähler=%.3f kWh, Wallbox=%s",
+                         session_id, start_energy, wallbox_id)
+        return
 
-        if state_value == IDLE or state_value == STOPPED:
-            if active_session:
-                # Session beenden (HA-05, HA-06)
-                energy_state = await ha_ws.get_state(sensor_energy)
-                end_energy = float(energy_state.get('state', 0)) if energy_state else 0.0
+    # ----- Wallbox-Status-Sensor (Session-Ende per State-Wechsel) -----------
+    if entity_id == sensor_state:
+        active = session_manager.get_active_session()
+        if not active:
+            return  # nichts zu tun
 
-                completed = session_manager.end_session(end_energy)
-                if completed:
-                    _LOGGER.info("Ladevorgang beendet: Session ID=%s, %.2f kWh",
-                                completed['id'], completed['total_kwh'])
+        if _is_idle_state(state_value):
+            await _end_active_session(f'state={state_value}')
+        elif _is_charging_state(state_value):
+            _LOGGER.debug("Wallbox lädt (state='%s')", state_value)
+        else:
+            _LOGGER.debug("Wallbox-State Zwischenzustand: '%s'", state_value)
+        return
 
-        elif state_value == CHARGING:
-            _LOGGER.debug("Wallbox lädt (Charging)")
+    # ----- Energie-Sensor (nur loggen während aktiver Session) --------------
+    if entity_id == sensor_energy:
+        active = session_manager.get_active_session()
+        if active:
+            try:
+                kwh = float(state_value) if state_value else 0.0
+                delta = kwh - float(active.get('start_energy_kwh') or 0.0)
+                _LOGGER.debug("Aktive Session #%s: Zähler=%.3f kWh, Geladen=%.3f kWh",
+                              active['id'], kwh, delta)
+            except (ValueError, TypeError):
+                pass
+        return
 
 
 async def check_startup_session():

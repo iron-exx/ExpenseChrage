@@ -340,7 +340,15 @@ def _build_live_page(session_manager, api_state, base_href=''):
     else:
         state_chip = ''
         if wallbox_state:
-            color = {'Charging': '#2e7d32', 'Idle': '#999', 'Stopped': '#c0392b'}.get(wallbox_state, '#999')
+            sl = wallbox_state.lower()
+            if 'charging' in sl and 'stopped' not in sl:
+                color = '#2e7d32'   # grün
+            elif any(k in sl for k in ['available', 'idle', 'finished', 'finishing']):
+                color = '#999'       # grau
+            elif any(k in sl for k in ['faulted', 'unavailable', 'stopped']):
+                color = '#c0392b'    # rot
+            else:
+                color = '#f39c12'    # orange (Übergang)
             state_chip = f'<span style="background:{color};color:#fff;padding:2px 8px;border-radius:3px;font-size:12px">{wallbox_state}</span>'
         sensor_banner = (
             f'<div class="msg ok" style="margin-bottom:14px">'
