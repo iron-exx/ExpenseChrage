@@ -16,7 +16,7 @@ options:
   log_level: "INFO"
   wallbox_id: "meine_wallbox"
   rfid_whitelist:
-    - "EFCD083E"
+    - "A1B2C3D4"
   ha_token: ""
   dolibarr_url: "https://dolibarr.example.com"
   api_token: ""

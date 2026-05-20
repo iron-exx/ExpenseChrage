@@ -333,7 +333,7 @@ if ($resUsers) {
         print '<input type="hidden" name="token" value="'.$token.'">';
         print '<input type="hidden" name="action" value="add_rfid">';
         print '<input type="hidden" name="user_id" value="'.$uid.'">';
-        print '<input type="text" name="rfid_hex" class="flat" size="14" placeholder="EFCD083E" style="text-transform:uppercase">';
+        print '<input type="text" name="rfid_hex" class="flat" size="14" placeholder="USER TAG ID" style="text-transform:uppercase">';
         print ' <input type="submit" class="button smallpaddingimp" value="+ Karte hinzufügen">';
         print '</form>';
 

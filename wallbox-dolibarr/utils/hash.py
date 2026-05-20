@@ -8,7 +8,7 @@ def hash_rfid(rfid_hex: str) -> str:
     Erstellt einen SHA-256 Hash der RFID-Karte (nur Hex-String, nicht Klartext).
     
     Args:
-        rfid_hex: RFID als Hex-String (z.B. "EFCD083E")
+        rfid_hex: RFID als Hex-String (z.B. "A1B2C3D4")
         
     Returns:
         SHA-256 Hash als Hex-String (64 Zeichen)

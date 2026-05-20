@@ -74,8 +74,8 @@ In Dolibarr muss **kein** zusätzliches Modul aktiv sein. Das wallboxbilling-Mod
    log_level: INFO
    wallbox_id: meine_wallbox
    rfid_whitelist:
-     - "EFCD083E"
-     - "ABC12345"
+     - "A1B2C3D4"
+     - "12345678"
    ha_token: ""                      # leer lassen — Supervisor-Token wird automatisch genutzt
    dolibarr_url: "https://erp.example.com"
    api_token: "<DOLAPIKEY aus 2.1>"

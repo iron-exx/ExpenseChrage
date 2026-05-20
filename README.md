@@ -71,7 +71,7 @@ Verify: `https://<dolibarr>/custom/wallboxbilling/receive.php` → muss `{"versi
    ```yaml
    wallbox_id: meine_wallbox
    rfid_whitelist:
-     - "EFCD083E"
+     - "A1B2C3D4"
    dolibarr_url: "https://erp.example.com"
    api_token: "<DOLAPIKEY>"
    sensor_rfid: sensor.alfen_eve_tag_socket_1

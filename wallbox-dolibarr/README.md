@@ -25,8 +25,8 @@ Home-Assistant-Addon: erfasst RFID-basierte Wallbox-Ladevorgänge und schreibt s
 log_level: INFO
 wallbox_id: meine_wallbox
 rfid_whitelist:
-  - "EFCD083E"
-  - "ABC12345"
+  - "A1B2C3D4"
+  - "12345678"
 ha_token: ""                      # leer = SUPERVISOR_TOKEN
 dolibarr_url: "https://erp.example.com"
 api_token: "<DOLAPIKEY>"
