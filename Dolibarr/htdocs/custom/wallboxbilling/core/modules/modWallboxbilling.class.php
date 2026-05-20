@@ -133,8 +133,10 @@ class modWallboxbilling extends DolibarrModules
     /**
      * Modul-Aktivierung (Dolibarr ruft das beim Aktivieren auf).
      *
-     * Legt die Datenbank-Tabellen + Indizes an, registriert Cronjobs,
-     * Berechtigungen, Menüs und Konstanten via _init().
+     * Legt die Tabelle llx_wallbox_rfid (RFID→User-Mapping) an, registriert
+     * Berechtigungen, Menüs und Konstanten via _init(). Keine Cronjobs mehr,
+     * keine Sessions-Tabelle — Sessions werden direkt in die Spesenabrechnung
+     * geschrieben (siehe receive.php).
      *
      * @param string $options Optionen (z.B. 'noboxes')
      * @return int 1 = OK, 0 = KO

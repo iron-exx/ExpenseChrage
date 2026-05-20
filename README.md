@@ -2,7 +2,8 @@
 
 RFID-basierte Abrechnung von Wallbox-Ladevorgängen — Sessions werden vom Home-Assistant-Addon **direkt in die Dolibarr-Spesenabrechnung** des jeweiligen Mitarbeiters geschrieben.
 
-![Version](https://img.shields.io/badge/Version-1.1.2-blue)
+![Dolibarr-Modul](https://img.shields.io/badge/Dolibarr--Modul-1.1.2-blue)
+![HA-Addon](https://img.shields.io/badge/HA--Addon-1.2.1-blue)
 ![Dolibarr](https://img.shields.io/badge/Dolibarr-20.x--22.x-green)
 ![Python](https://img.shields.io/badge/Python-3.12+-green)
 
@@ -74,17 +75,28 @@ Verify: `https://<dolibarr>/custom/wallboxbilling/receive.php` → muss `{"versi
      - "A1B2C3D4"
    dolibarr_url: "https://erp.example.com"
    api_token: "<DOLAPIKEY>"
-   sensor_rfid: sensor.alfen_eve_tag_socket_1
-   sensor_energy: sensor.alfen_energy_total
-   sensor_state: sensor.alfen_eve_display_state_socket_1
+   sensor_rfid:   sensor.alfen_eve_tag_socket_1
+   sensor_energy: sensor.alfen_eve_meter_reading_socket_1
+   sensor_state:  sensor.alfen_eve_main_state_socket_1
    ```
+
+### 3. Live-Ansicht (Addon-Web-UI)
+
+Im HA-Addon stehen drei Tabs zur Verfügung:
+
+- **⚡ Erfassen** — manuelle Sessions nachtragen
+- **🔴 Live** — laufende Ladevorgänge in Echtzeit: RFID-Prefix, Wallbox-Status (Charging/Available/…), Start-Zeit, laufende Dauer, geladene kWh (Live-Delta aus dem Zählerstand). Auto-Refresh alle 5 s.
+- **📋 Verlauf** — abgeschlossene Sessions pro Monat, CSV-Export
 
 ## Datenfluss im Detail
 
-1. **RFID gelesen**: HA-Sensor triggert
+1. **RFID gelesen** (`sensor.alfen_eve_tag_socket_1`): wechselt von `No Tag` auf eine Tag-ID (z.B. `A1B2C3D4`)
 2. **Whitelist + Debounce**: 7-Sekunden-Sperre gegen Doppellesungen
-3. **Session starten**: lokale SQLite speichert `start_time` + `start_energy_kwh`
-4. **Session beenden**: bei Status-Wechsel `Charging → Idle` wird `end_time` + `end_energy_kwh` ermittelt, `total_kwh = end − start`
+3. **Session starten**: lokale SQLite speichert `start_time` + `start_energy_kwh` (Zählerstand aus `sensor.alfen_eve_meter_reading_socket_1`)
+4. **Session beenden** — getriggert durch:
+   - Wallbox-Status (`sensor.alfen_eve_main_state_socket_1`) wechselt auf `Available`, `Finishing`, `Stopped`, `Faulted`, … (substring-Match auf `charging`/`idle`/etc.), **oder**
+   - RFID wechselt zurück auf `No Tag` (Karte abgezogen)
+   - `total_kwh = end_zähler − start_zähler`
 5. **Transmit** (alle 5 min oder sofort):
    - POST an `receive.php` mit `{rfid_hash, wallbox_id, start_time, end_time, kwh}`
    - PHP-Endpoint: RFID→User → Spesenabrechnung suchen/anlegen → Zeile rein

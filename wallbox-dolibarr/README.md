@@ -1,16 +1,20 @@
 # Wallbox-Dolibarr Addon
 
-Home-Assistant-Addon: erfasst RFID-basierte Wallbox-Ladevorgänge und schreibt sie direkt in die Dolibarr-Spesenabrechnung des jeweiligen Mitarbeiters.
+Home-Assistant-Addon: erfasst RFID-basierte Ladevorgänge der Alfen-Eve-Wallbox und schreibt sie direkt in die Dolibarr-Spesenabrechnung des jeweiligen Mitarbeiters.
 
 ## Funktionen
 
-- RFID-Lesung über Wallbox-Sensoren in HA (Alfen, generisch)
+- RFID-Erkennung über die Alfen-Eve-Sensoren (`alfen_eve_tag_socket_1`, `alfen_eve_meter_reading_socket_1`, `alfen_eve_main_state_socket_1`)
 - Session-Tracking (Start, Ende, kWh) mit lokalem SQLite-Buffer
 - SHA-256-Hash für RFID — keine Klartext-Speicherung (DSGVO/Datensparsamkeit)
 - 7-Sekunden-Debounce gegen Doppellesungen
+- Robuste Status-Erkennung: substring-Match auf Alfen-Werte wie `Charging Power On`, `Available`, `Finishing`, `Faulted`
+- End-Trigger via Status **oder** RFID-„No Tag" (Karte abgezogen)
 - Automatische Übertragung an Dolibarr `receive.php` mit DOLAPIKEY-Auth
-- Crash-Recovery: aktive Sessions beim Neustart erkennen und behandeln
-- Web-UI (Ingress): manuelle Sessions, Historie, CSV-Export
+- Web-UI (Ingress) mit drei Tabs:
+  - **⚡ Erfassen** — manuelle Session
+  - **🔴 Live** — laufende Sessions in Echtzeit (Auto-Refresh 5 s)
+  - **📋 Verlauf** — Historie + CSV-Export
 
 ## Installation
 
@@ -32,8 +36,8 @@ dolibarr_url: "https://erp.example.com"
 api_token: "<DOLAPIKEY>"
 transmit_interval: 300
 sensor_rfid:   sensor.alfen_eve_tag_socket_1
-sensor_energy: sensor.alfen_energy_total
-sensor_state:  sensor.alfen_eve_display_state_socket_1
+sensor_energy: sensor.alfen_eve_meter_reading_socket_1
+sensor_state:  sensor.alfen_eve_main_state_socket_1
 ```
 
 | Schlüssel | Beschreibung |
@@ -43,20 +47,22 @@ sensor_state:  sensor.alfen_eve_display_state_socket_1
 | `dolibarr_url` | Basis-URL, ohne `/custom/wallboxbilling/...` Pfad |
 | `api_token` | DOLAPIKEY eines Dolibarr-Service-Users |
 | `transmit_interval` | Sekunden zwischen Retry-Loops (Default 300 = 5 min) |
+| `sensor_rfid` | HA-Entity für die RFID-Lesung (liefert Tag-ID oder `No Tag`) |
+| `sensor_energy` | HA-Entity für den kumulativen Energiezähler in kWh |
+| `sensor_state` | HA-Entity für den Wallbox-Status (Available / Charging / …) |
 
 ## Voraussetzungen
 
-- Home Assistant Core mit Wallbox-Integration (z.B. Alfen)
+- Home Assistant Core mit Alfen-Eve-Integration (oder kompatible Wallbox die drei vergleichbare Sensoren liefert)
 - Dolibarr 20+ mit installiertem `wallboxbilling`-Modul (Version 1.1.2+)
-- HA-Sensor für RFID, Energiezähler (kWh) und Wallbox-Status
 
-## API-Endpoint Dolibarr-Seite
+## API-Endpoint (Dolibarr-Seite)
 
 Das Addon spricht ausschließlich `POST /custom/wallboxbilling/receive.php` an. Body:
 
 ```json
 {
-  "rfid_hash": "9df4e8...",
+  "rfid_hash": "<sha256 hex>",
   "wallbox_id": "meine_wallbox",
   "start_time": "2026-05-19T08:42:00+02:00",
   "end_time":   "2026-05-19T09:15:00+02:00",
@@ -64,4 +70,8 @@ Das Addon spricht ausschließlich `POST /custom/wallboxbilling/receive.php` an. 
 }
 ```
 
-Header: `DOLAPIKEY: <token>`. Response: 200 mit `report_id` + `line_id` bei Erfolg, 422 bei unbekanntem/inaktivem RFID, 4xx/5xx bei Fehlern (Addon retried automatisch).
+Header: `DOLAPIKEY: <token>`. Response:
+- **200** mit `report_id` + `line_id` bei Erfolg
+- **422 RFID_NOT_MAPPED** wenn der RFID-Hash keinem Dolibarr-User zugeordnet ist
+- **422 RFID_INACTIVE** wenn die Karte deaktiviert wurde (Soft-Delete)
+- 4xx/5xx bei sonstigen Fehlern — Addon retried automatisch

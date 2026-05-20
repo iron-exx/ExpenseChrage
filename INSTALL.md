@@ -81,17 +81,23 @@ In Dolibarr muss **kein** zusätzliches Modul aktiv sein. Das wallboxbilling-Mod
    api_token: "<DOLAPIKEY aus 2.1>"
    transmit_interval: 300            # alle 5 min an Dolibarr senden
    sensor_rfid:   sensor.alfen_eve_tag_socket_1
-   sensor_energy: sensor.alfen_energy_total
-   sensor_state:  sensor.alfen_eve_display_state_socket_1
+   sensor_energy: sensor.alfen_eve_meter_reading_socket_1
+   sensor_state:  sensor.alfen_eve_main_state_socket_1
    ```
+
+   > **Wichtig:** Die drei Sensoren müssen wirklich existieren — prüfen mit
+   > *Entwicklerwerkzeuge → Zustände → Filter „alfen_eve"*. Bei abweichenden
+   > Wallboxen die entsprechenden Sensoren eintragen.
+
 3. **Speichern → Starten**.
 4. Logs prüfen: muss zeigen `Dolibarr API Verbindung erfolgreich`.
 
 ### 3.3 — Ingress-UI
 
-Über *Add-on öffnen* erreichbar:
-- Manuelle Sessions anlegen
-- Historie + CSV-Export
+Über *Add-on öffnen* erreichbar, drei Tabs:
+- **⚡ Erfassen** — manuelle Session nachtragen
+- **🔴 Live** — laufende Ladevorgänge in Echtzeit (Auto-Refresh 5 s)
+- **📋 Verlauf** — Historie pro Monat + CSV-Export
 - Übertragungs-Status pro Session
 
 ---
