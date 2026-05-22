@@ -20,6 +20,7 @@ Session-Logik:
   • Geladen = Zähler_END − Zähler_START
 """
 import asyncio
+import time
 import aiohttp
 import json
 import logging
@@ -57,6 +58,16 @@ _DEFAULT_SENSOR_STATE  = "sensor.alfen_eve_main_state_socket_1"
 
 # RFID-Werte die als "keine Karte" interpretiert werden
 _RFID_NONE_VALUES = {'', 'no tag', 'no_tag', 'none', 'unknown', 'unavailable'}
+
+# Pending-Auth-Fenster: wie lange (Sekunden) ein erkannter RFID-Tag
+# "memoriert" wird, falls erst SPÄTER der Charging-Power-On-State kommt.
+# Alfen brauchst manchmal Minuten zwischen NFC-Auth und tatsächlichem
+# Charging-Start (Auto wird erst danach angesteckt).
+_PENDING_AUTH_WINDOW = 600  # 10 Minuten
+
+# Letzte erkannte autorisierte RFID — wird vom Charging-State-Trigger
+# als Fallback verwendet, falls der RFID-Event verpasst wurde.
+_pending_auth = None  # dict: {'rfid_hex': str, 'time': float}
 
 # Wallbox-Status: substring-Match (case-insensitive) gegen den echten Sensor-Wert.
 # Alfen-Wallbox-States: "Available", "Preparing", "Charging Power On",
@@ -208,6 +219,27 @@ class HomeAssistantWebsocket:
         _LOGGER.info("Verbindung getrennt")
 
 
+async def _start_session_for(rfid_hex: str, source: str):
+    """Startet eine neue Session falls noch keine aktiv ist. Liest den
+    Energie-Zählerstand atomar aus dem konfigurierten Sensor."""
+    if session_manager.get_active_session():
+        return None  # bereits aktiv — kein Doppelstart
+
+    sensor_energy = current_config.get('sensor_energy', _DEFAULT_SENSOR_ENERGY)
+    energy_state  = await ha_ws.get_state(sensor_energy)
+    try:
+        start_energy = float(energy_state.get('state', 0)) if energy_state else 0.0
+    except (ValueError, TypeError):
+        start_energy = 0.0
+
+    wallbox_id = current_config.get('wallbox_id', 'wallbox')
+    session_id = session_manager.start_session(rfid_hex, start_energy, wallbox_id=wallbox_id)
+    if session_id:
+        _LOGGER.info("Ladevorgang gestartet (%s): Session #%s, Start-Zähler=%.3f kWh",
+                     source, session_id, start_energy)
+    return session_id
+
+
 async def _end_active_session(reason: str):
     """Beendet die aktive Session mit dem aktuellen Energie-Zählerstand.
     Sessions mit < min_session_kwh werden als 'discarded' markiert."""
@@ -262,51 +294,66 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
 
     # ----- RFID-Sensor (Session-Start / Karte abgezogen) --------------------
     if entity_id == sensor_rfid:
+        global _pending_auth
         sv = (state_value or '').strip()
         sv_low = sv.lower()
 
-        # "No Tag" / unknown → Karte entfernt: aktive Session beenden
+        # "No Tag" / unknown → Karte entfernt
         if sv_low in _RFID_NONE_VALUES:
             if session_manager.get_active_session():
                 await _end_active_session('rfid_removed')
             return
 
-        # Echter Tag erkannt
+        # Echter Tag erkannt — Debounce + Whitelist
         if not session_manager.debounce_rfid(sv):
-            return  # zu schnell hintereinander gelesen — ignorieren
-
+            return
         whitelist = current_config.get('rfid_whitelist', [])
         if not session_manager.is_rfid_authorized(sv, whitelist):
             _LOGGER.warning("Nicht autorisierte RFID: %s... (Whitelist-Eintrag fehlt)",
                             hash_rfid(sv)[:16])
             return
 
-        # Energie-Zähler atomar lesen für Start-Wert
-        energy_state = await ha_ws.get_state(sensor_energy)
-        try:
-            start_energy = float(energy_state.get('state', 0)) if energy_state else 0.0
-        except (ValueError, TypeError):
-            start_energy = 0.0
+        # Tag als "pending auth" merken — falls Charging erst später startet
+        _pending_auth = {'rfid_hex': sv, 'time': time.time()}
 
-        wallbox_id = current_config.get('wallbox_id', 'wallbox')
-        session_id = session_manager.start_session(sv, start_energy, wallbox_id=wallbox_id)
-        if session_id:
-            _LOGGER.info("Ladevorgang gestartet: Session #%s, Start-Zähler=%.3f kWh, Wallbox=%s",
-                         session_id, start_energy, wallbox_id)
+        # Session sofort starten (klassischer Fall: Karte → Laden)
+        await _start_session_for(sv, 'rfid_event')
         return
 
-    # ----- Wallbox-Status-Sensor (Session-Ende per State-Wechsel) -----------
+    # ----- Wallbox-Status-Sensor (Session-Start/Ende per State-Wechsel) -----
     if entity_id == sensor_state:
         active = session_manager.get_active_session()
-        if not active:
-            return  # nichts zu tun
+
+        if _is_charging_state(state_value):
+            # Wallbox lädt jetzt aktiv. Wenn KEINE Session läuft, aber eine
+            # RFID kürzlich autorisiert wurde → Session nachträglich starten.
+            # Fängt RFID-Events ab die das Addon verpasst hat (z.B. während
+            # Restart, Websocket-Reconnect, oder lange Auth→Charging-Delay).
+            if active:
+                _LOGGER.debug("Wallbox lädt (state='%s'), Session #%s läuft",
+                              state_value, active['id'])
+                return
+            if _pending_auth and (time.time() - _pending_auth['time']) < _PENDING_AUTH_WINDOW:
+                rfid_hex = _pending_auth['rfid_hex']
+                _LOGGER.info("Session-Start nachträglich via charging-state — "
+                             "RFID-Auth war vor %.0f Sekunden",
+                             time.time() - _pending_auth['time'])
+                await _start_session_for(rfid_hex, f'charging_state={state_value}')
+                _pending_auth = None
+            else:
+                _LOGGER.warning("Wallbox lädt (state='%s') aber keine RFID-Auth im "
+                                "Pending-Window. Session wird NICHT erfasst — Karte "
+                                "evtl. vor Addon-Start gehalten?", state_value)
+            return
 
         if _is_idle_state(state_value):
-            await _end_active_session(f'state={state_value}')
-        elif _is_charging_state(state_value):
-            _LOGGER.debug("Wallbox lädt (state='%s')", state_value)
-        else:
-            _LOGGER.debug("Wallbox-State Zwischenzustand: '%s'", state_value)
+            if active:
+                await _end_active_session(f'state={state_value}')
+            # Pending nach Idle leeren — Auth ist verbraucht
+            _pending_auth = None
+            return
+
+        _LOGGER.debug("Wallbox-State Zwischenzustand: '%s'", state_value)
         return
 
     # ----- Energie-Sensor (nur loggen während aktiver Session) --------------
@@ -324,25 +371,57 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
 
 
 async def check_startup_session():
-    """Prüft beim Start ob eine aktive Session existiert und führt Recovery durch (PER-02, PER-03)"""
-    global session_manager, api_client
+    """Prüft beim Start ob eine aktive Session existiert UND ob die Wallbox
+    aktuell lädt — fängt verlorene Sessions ab wenn das Addon während einer
+    laufenden Ladung neugestartet wurde."""
+    global session_manager, api_client, _pending_auth
 
-    # Startup Recovery: Alle aktiven Sessions finden (PER-02)
+    # 1) Alte 'active' Sessions in SQLite als unvollständig markieren
     recovered_sessions = session_manager.recover_active_sessions()
-
     if recovered_sessions:
         _LOGGER.info("=== Startup Recovery: %d aktive Sessions gefunden ===", len(recovered_sessions))
-
-        # Aktive Sessions beim Neustart werden grundsätzlich als unvollständig
-        # markiert — wir kennen den realen Wallbox-Status nicht mehr. Die
-        # nächste echte Ladung erzeugt eine neue, saubere Session.
         for session in recovered_sessions:
             session_manager.mark_session_incomplete(session['id'], 'restart_recovery')
             _LOGGER.warning("Session %d als unvollständig markiert (Addon-Neustart)", session['id'])
 
-        _LOGGER.info("=== Startup Recovery abgeschlossen ===")
-    else:
-        _LOGGER.info("Keine aktiven Sessions beim Start - alles bereit")
+    # 2) Aktuellen Wallbox-Status + RFID prüfen — falls gerade geladen wird,
+    #    eine neue Session starten damit nichts verloren geht.
+    sensor_rfid  = current_config.get('sensor_rfid',  _DEFAULT_SENSOR_RFID)
+    sensor_state = current_config.get('sensor_state', _DEFAULT_SENSOR_STATE)
+    try:
+        rfid_now  = await ha_ws.get_state(sensor_rfid)
+        state_now = await ha_ws.get_state(sensor_state)
+    except Exception as exc:
+        _LOGGER.warning("Konnte aktuellen Wallbox-Zustand beim Start nicht lesen: %s", exc)
+        return
+
+    rfid_val  = (rfid_now.get('state') if rfid_now else '') or ''
+    state_val = (state_now.get('state') if state_now else '') or ''
+    _LOGGER.info("Wallbox-Zustand beim Start: state='%s', rfid='%s'", state_val, rfid_val)
+
+    # Wenn gerade geladen wird UND ein gültiger Tag anliegt → Session starten
+    if _is_charging_state(state_val):
+        whitelist = current_config.get('rfid_whitelist', [])
+        if rfid_val and rfid_val.lower() not in _RFID_NONE_VALUES \
+           and session_manager.is_rfid_authorized(rfid_val, whitelist):
+            _LOGGER.warning(
+                "Wallbox lädt bereits beim Addon-Start (state=%s) — starte Session "
+                "mit aktuellem Tag. Hinweis: bisher geladene kWh sind verloren, "
+                "ab jetzt wird wieder erfasst.", state_val
+            )
+            await _start_session_for(rfid_val, 'startup_charging_detected')
+        else:
+            _LOGGER.warning(
+                "Wallbox lädt (state=%s) aber kein gültiger RFID-Tag (rfid=%s). "
+                "Diese Ladung wird NICHT erfasst. Manuell nachtragen unter "
+                "⚡ Erfassen im Addon-UI.", state_val, rfid_val
+            )
+
+    # Falls gerade ein Tag anliegt, ihn als pending-auth merken (für Charging-Wechsel)
+    if rfid_val and rfid_val.lower() not in _RFID_NONE_VALUES:
+        whitelist = current_config.get('rfid_whitelist', [])
+        if session_manager.is_rfid_authorized(rfid_val, whitelist):
+            _pending_auth = {'rfid_hex': rfid_val, 'time': time.time()}
 
 
 async def main():

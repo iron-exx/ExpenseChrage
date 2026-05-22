@@ -1,6 +1,6 @@
 name: "Wallbox Dolibarr Invoice"
 description: "Schreibt RFID-Ladevorgänge der Alfen Eve Wallbox direkt als Position in die Dolibarr-Spesenabrechnung des jeweiligen Mitarbeiters"
-version: "1.2.2"
+version: "1.2.3"
 slug: "wallbox-dolibarr"
 url: "https://github.com/iron-exx/evcharge-dolibarr-invoice"
 init: false
