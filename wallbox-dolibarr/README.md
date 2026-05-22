@@ -11,9 +11,8 @@ Home-Assistant-Addon: erfasst RFID-basierte Ladevorgänge der Alfen-Eve-Wallbox 
 - Robuste Status-Erkennung: substring-Match auf Alfen-Werte wie `Charging Power On`, `Available`, `Finishing`, `Faulted`
 - End-Trigger via Status **oder** RFID-„No Tag" (Karte abgezogen)
 - Automatische Übertragung an Dolibarr `receive.php` mit DOLAPIKEY-Auth
-- Web-UI (Ingress) mit drei Tabs:
-  - **⚡ Erfassen** — manuelle Session
-  - **🔴 Live** — laufende Sessions in Echtzeit (Auto-Refresh 5 s)
+- Web-UI (Ingress):
+  - **⚡ Erfassen** — Startseite mit eingebettetem Live-Block (laufende Sessions + Wallbox-Status, flackerfreies JS-Polling alle 5 s über `/live.json`) + manuelles Erfassen
   - **📋 Verlauf** — Historie + CSV-Export
 
 ## Installation

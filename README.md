@@ -3,7 +3,7 @@
 RFID-basierte Abrechnung von Wallbox-Ladevorgängen — Sessions werden vom Home-Assistant-Addon **direkt in die Dolibarr-Spesenabrechnung** des jeweiligen Mitarbeiters geschrieben.
 
 ![Dolibarr-Modul](https://img.shields.io/badge/Dolibarr--Modul-1.1.3-blue)
-![HA-Addon](https://img.shields.io/badge/HA--Addon-1.2.3-blue)
+![HA-Addon](https://img.shields.io/badge/HA--Addon-1.2.4-blue)
 ![Dolibarr](https://img.shields.io/badge/Dolibarr-20.x--22.x-green)
 ![Python](https://img.shields.io/badge/Python-3.12+-green)
 
@@ -80,12 +80,14 @@ Verify: `https://<dolibarr>/custom/wallboxbilling/receive.php` → muss `{"versi
    sensor_state:  sensor.alfen_eve_main_state_socket_1
    ```
 
-### 3. Live-Ansicht (Addon-Web-UI)
+### 3. Addon-Web-UI
 
-Im HA-Addon stehen drei Tabs zur Verfügung:
+Zwei Tabs im Ingress:
 
-- **⚡ Erfassen** — manuelle Sessions nachtragen
-- **🔴 Live** — laufende Ladevorgänge in Echtzeit: RFID-Prefix, Wallbox-Status (Charging/Available/…), Start-Zeit, laufende Dauer, geladene kWh (Live-Delta aus dem Zählerstand). Auto-Refresh alle 5 s.
+- **⚡ Erfassen** — Hauptseite mit:
+  - **Live-Block oben** (sofern Sensoren liefern): aktueller Zählerstand, Wallbox-Status als farbiger Chip (grün=Charging, grau=Idle, rot=Faulted), laufende Sessions mit RFID-Prefix, Start-Zeit, Dauer und Live-kWh-Delta. **Flackerfreies JS-Polling** (`fetch('live.json')` alle 5 s)
+  - Manuelles Erfassen einer Ladung
+  - „Jetzt an Dolibarr übertragen" Button
 - **📋 Verlauf** — abgeschlossene Sessions pro Monat, CSV-Export
 
 ## Datenfluss im Detail

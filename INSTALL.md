@@ -95,9 +95,8 @@ In Dolibarr muss **kein** zusätzliches Modul aktiv sein. Das wallboxbilling-Mod
 
 ### 3.3 — Ingress-UI
 
-Über *Add-on öffnen* erreichbar, drei Tabs:
-- **⚡ Erfassen** — manuelle Session nachtragen
-- **🔴 Live** — laufende Ladevorgänge in Echtzeit (Auto-Refresh 5 s)
+Über *Add-on öffnen* erreichbar, zwei Tabs:
+- **⚡ Erfassen** — Live-Block (Wallbox-Status + laufende Sessions, JS-Polling alle 5 s) + manuelles Nachtragen + Sofort-Übertragen-Button
 - **📋 Verlauf** — Historie pro Monat + CSV-Export
 - Übertragungs-Status pro Session
 

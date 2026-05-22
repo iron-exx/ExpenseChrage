@@ -108,10 +108,10 @@ def _base(nav_html, content, base_href=''):
 </html>"""
 
 def _nav(active):
-    # Relative URLs — absoluter Pfad würde HA-eigene Seiten öffnen
+    # Relative URLs — absoluter Pfad würde HA-eigene Seiten öffnen.
+    # Live-Anzeige ist ab 1.2.4 in die Startseite integriert (JS-Polling).
     return (
         f'<a href="./" class="{"active" if active == "form" else ""}">⚡ Erfassen</a>'
-        f'<a href="live" class="{"active" if active == "live" else ""}">🔴 Live</a>'
         f'<a href="history" class="{"active" if active == "history" else ""}">📋 Verlauf</a>'
     )
 
@@ -171,16 +171,8 @@ def _db_active_sessions(db_path):
     conn.close()
     return rows
 
-def _fmt_duration(seconds):
-    """Sekunden → 'Hh Mm Ss' oder 'Mm Ss'"""
-    if seconds is None or seconds < 0:
-        return '–'
-    s = int(seconds)
-    h, rem = divmod(s, 3600)
-    m, s = divmod(rem, 60)
-    if h:
-        return f'{h}h {m:02d}m {s:02d}s'
-    return f'{m}m {s:02d}s'
+# Hinweis: Dauer-Formatierung passiert client-seitig in der JS-Polling-Logik
+# der Startseite (fmtDuration), nicht mehr in Python.
 
 # ---------------------------------------------------------------------------
 # Seiten-Builder
@@ -220,8 +212,92 @@ def _build_form_page(session_manager, config, message_html='', base_href=''):
         if rows_html else ''
     )
 
+    # Live-Block (wird via JS aus /live.json aktualisiert — kein Flackern)
+    live_block = """
+<div class="card" id="live-card" style="display:none">
+  <h3 style="display:flex;align-items:center;gap:8px">
+    <span id="live-dot" style="width:10px;height:10px;border-radius:50%;background:#999;display:inline-block"></span>
+    Aktueller Ladevorgang
+  </h3>
+  <div id="live-banner" style="font-size:13px;color:#666;margin-bottom:8px"></div>
+  <div id="live-content"></div>
+</div>"""
+
+    js_polling = """
+<script>
+(function(){
+  function fmtDuration(s){
+    s=Math.max(0,Math.floor(s));
+    var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;
+    return (h?h+'h ':'')+(m<10?'0'+m:m)+'m '+(sec<10?'0'+sec:sec)+'s';
+  }
+  function escapeHtml(t){return (t||'').replace(/[&<>"']/g,function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];});}
+  function render(data){
+    var card=document.getElementById('live-card');
+    if(!card) return;
+    var sessions=data.sessions||[];
+    var sensor=data.sensor||{};
+    var hasSessions=sessions.length>0;
+    var hasSensor=sensor.current_energy!==null && sensor.current_energy!==undefined;
+
+    if(!hasSessions && !hasSensor){ card.style.display='none'; return; }
+    card.style.display='block';
+
+    // Sensor-Banner
+    var state=sensor.wallbox_state||'';
+    var sl=state.toLowerCase();
+    var stateColor='#999';
+    if(sl.indexOf('charging')>=0 && sl.indexOf('stopped')<0) stateColor='#2e7d32';
+    else if(['available','idle','finished','finishing'].some(function(k){return sl.indexOf(k)>=0;})) stateColor='#999';
+    else if(['faulted','unavailable','stopped'].some(function(k){return sl.indexOf(k)>=0;})) stateColor='#c0392b';
+    else if(state) stateColor='#f39c12';
+
+    document.getElementById('live-dot').style.background=stateColor;
+
+    var banner='';
+    if(hasSensor){
+      var chip=state?'<span style="background:'+stateColor+';color:#fff;padding:2px 8px;border-radius:3px;font-size:11px;margin-left:6px">'+escapeHtml(state)+'</span>':'';
+      banner='Zähler: <strong>'+sensor.current_energy.toFixed(3)+' kWh</strong>'+chip+
+             '<span style="float:right;color:#999;font-size:11px">'+(sensor.last_update||'')+'</span>';
+    } else {
+      banner='<span style="color:#c0392b">Kein Zähler-Wert vom HA-Sensor</span>';
+    }
+    document.getElementById('live-banner').innerHTML=banner;
+
+    // Sessions-Liste
+    var html='';
+    if(hasSessions){
+      sessions.forEach(function(s){
+        var kwhStr=(s.current_kwh!==null&&s.current_kwh!==undefined)?s.current_kwh.toFixed(3)+' kWh':'—';
+        html+='<div style="border-left:4px solid '+stateColor+';padding:10px 12px;margin-bottom:8px;background:#fafafa;border-radius:4px">'
+          +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">'
+          +'<div><div style="font-size:11px;color:#888">#'+s.id+' · '+escapeHtml(s.wallbox_id)+'</div>'
+          +'<code style="font-size:12px">'+escapeHtml(s.rfid_prefix)+'</code></div>'
+          +'<div style="font-size:20px;font-weight:bold;color:'+stateColor+'">'+kwhStr+'</div>'
+          +'</div>'
+          +'<div style="font-size:12px;color:#555">'
+          +'Start: '+escapeHtml(s.start_time_fmt)+' · Dauer: '+fmtDuration(s.elapsed_seconds)
+          +'</div></div>';
+      });
+    } else if(hasSensor) {
+      html='<div style="text-align:center;color:#888;padding:8px 0;font-size:13px">Aktuell kein Ladevorgang aktiv.</div>';
+    }
+    document.getElementById('live-content').innerHTML=html;
+  }
+  function poll(){
+    fetch('live.json',{cache:'no-store'})
+      .then(function(r){return r.json();})
+      .then(render)
+      .catch(function(){/* swallow — Netz weg, nächster Poll versucht's */});
+  }
+  poll();
+  setInterval(poll, 5000);
+})();
+</script>"""
+
     content = f"""
 {message_html}
+{live_block}
 <div class="card">
   <h3>Manueller Ladevorgang</h3>
   <form method="POST" action="./">
@@ -241,7 +317,8 @@ def _build_form_page(session_manager, config, message_html='', base_href=''):
     <button type="submit" class="btn btn-transmit">📤 Jetzt an Dolibarr übertragen</button>
   </form>
 </div>
-{sessions_block}"""
+{sessions_block}
+{js_polling}"""
 
     return _base(_nav('form'), content, base_href)
 
@@ -330,103 +407,8 @@ def _build_history_page(session_manager, year, month, base_href=''):
     return _base(_nav('history'), content, base_href)
 
 
-def _build_live_page(session_manager, api_state, base_href=''):
-    """Live-Ansicht laufender Lade-Sessions mit Fortschritt (Auto-Refresh 5s)"""
-    active = _db_active_sessions(session_manager.db_path)
-
-    current_energy = api_state.get('current_energy') if api_state else None
-    wallbox_state  = api_state.get('wallbox_state')  if api_state else None
-    last_update    = api_state.get('last_update')    if api_state else None
-
-    # Sensor-Status-Banner
-    if current_energy is None:
-        sensor_banner = (
-            '<div class="msg err" style="margin-bottom:14px">'
-            'Kein aktueller Energie-Wert vom HA-Sensor. '
-            'Prüfe sensor_energy in der Addon-Konfiguration.'
-            '</div>'
-        )
-    else:
-        state_chip = ''
-        if wallbox_state:
-            sl = wallbox_state.lower()
-            if 'charging' in sl and 'stopped' not in sl:
-                color = '#2e7d32'   # grün
-            elif any(k in sl for k in ['available', 'idle', 'finished', 'finishing']):
-                color = '#999'       # grau
-            elif any(k in sl for k in ['faulted', 'unavailable', 'stopped']):
-                color = '#c0392b'    # rot
-            else:
-                color = '#f39c12'    # orange (Übergang)
-            state_chip = f'<span style="background:{color};color:#fff;padding:2px 8px;border-radius:3px;font-size:12px">{wallbox_state}</span>'
-        sensor_banner = (
-            f'<div class="msg ok" style="margin-bottom:14px">'
-            f'Zähler aktuell: <strong>{current_energy:.3f} kWh</strong> {state_chip}'
-            f'<span style="float:right;color:#666;font-size:12px">'
-            f'Sensor zuletzt: {last_update or "—"}</span>'
-            f'</div>'
-        )
-
-    if not active:
-        body = (
-            '<div style="text-align:center;padding:40px;color:#888">'
-            '<div style="font-size:48px;margin-bottom:8px">⚡</div>'
-            '<div>Aktuell läuft kein Ladevorgang.</div>'
-            '<div style="font-size:13px;margin-top:6px">'
-            'Sobald eine RFID-Karte an die Wallbox gehalten wird, '
-            'erscheint die Session hier in Echtzeit.</div>'
-            '</div>'
-        )
-    else:
-        now = datetime.now()
-        rows_html = ''
-        for s in active:
-            try:
-                start_dt = datetime.fromisoformat(s['start_time'])
-            except (ValueError, TypeError):
-                start_dt = now
-            elapsed = (now - start_dt).total_seconds()
-
-            start_energy = float(s.get('start_energy_kwh') or 0.0)
-            if current_energy is not None and current_energy >= start_energy:
-                kwh_delta = current_energy - start_energy
-                kwh_str   = f'{kwh_delta:.3f} kWh'
-            else:
-                kwh_str = '—'
-
-            rfid_prefix = (s.get('rfid_hash') or '')[:16] + '…'
-            wallbox     = s.get('wallbox_id') or '—'
-            start_str   = start_dt.strftime('%d.%m.%Y %H:%M:%S')
-
-            rows_html += f"""
-  <div style="border:1px solid #e0e0e0;border-radius:6px;padding:14px;margin-bottom:10px;
-              background:#fff;border-left:4px solid #2e7d32">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <div>
-        <div style="font-size:12px;color:#666">Session #{s['id']} · {wallbox}</div>
-        <code style="font-size:13px">{rfid_prefix}</code>
-      </div>
-      <div style="font-size:24px;font-weight:bold;color:#2e7d32">{kwh_str}</div>
-    </div>
-    <div style="display:flex;gap:24px;font-size:13px;color:#555">
-      <div><b>Start:</b> {start_str}</div>
-      <div><b>Dauer:</b> {_fmt_duration(elapsed)}</div>
-      <div><b>Start-Zählerstand:</b> {start_energy:.3f} kWh</div>
-    </div>
-  </div>"""
-        body = rows_html
-
-    content = f"""
-<div class="card">
-  <h2>🔴 Laufende Ladevorgänge</h2>
-  {sensor_banner}
-  {body}
-  <div style="text-align:center;color:#888;font-size:11px;margin-top:12px">
-    Auto-Refresh alle 5 Sekunden
-  </div>
-</div>
-<meta http-equiv="refresh" content="5">"""
-    return _base(_nav('live'), content, base_href)
+# Hinweis: Die separate Live-Seite wurde in 1.2.4 in die Startseite integriert
+# (JS-Polling auf /live.json — flackerfrei).
 
 # ---------------------------------------------------------------------------
 # App-Factory
@@ -567,19 +549,49 @@ def create_app(session_manager, config, api_state):
             headers={'Content-Disposition': f'attachment; filename="{filename}"'}
         )
 
-    # -- GET /live ------------------------------------------------------------
-    async def handle_live(request):
-        base_href = request.headers.get('X-Ingress-Path', '').rstrip('/')
-        return web.Response(
-            text=_build_live_page(session_manager, api_state, base_href=base_href),
-            content_type='text/html'
-        )
+    # -- GET /live.json (JSON-Endpoint für JS-Polling, flackerfrei) ----------
+    async def handle_live_json(request):
+        active = _db_active_sessions(session_manager.db_path)
+        current_energy = api_state.get('current_energy') if api_state else None
+        wallbox_state  = api_state.get('wallbox_state')  if api_state else None
+        last_update    = api_state.get('last_update')    if api_state else None
+
+        now = datetime.now()
+        sessions_out = []
+        for s in active:
+            try:
+                start_dt = datetime.fromisoformat(s['start_time'])
+            except (ValueError, TypeError):
+                start_dt = now
+            elapsed = (now - start_dt).total_seconds()
+            start_energy = float(s.get('start_energy_kwh') or 0.0)
+            current_kwh = None
+            if current_energy is not None and current_energy >= start_energy:
+                current_kwh = current_energy - start_energy
+            sessions_out.append({
+                'id': s['id'],
+                'rfid_prefix': ((s.get('rfid_hash') or '')[:16] + '…'),
+                'wallbox_id': s.get('wallbox_id') or '—',
+                'start_time_fmt': start_dt.strftime('%d.%m.%Y %H:%M:%S'),
+                'elapsed_seconds': elapsed,
+                'start_energy_kwh': start_energy,
+                'current_kwh': current_kwh,
+            })
+
+        return web.json_response({
+            'sensor': {
+                'current_energy': current_energy,
+                'wallbox_state':  wallbox_state,
+                'last_update':    last_update,
+            },
+            'sessions': sessions_out,
+        })
 
     app = web.Application()
     app.router.add_get('/',          handle_get)
     app.router.add_post('/',         handle_post)
     app.router.add_post('/transmit', handle_transmit)
-    app.router.add_get('/live',      handle_live)
+    app.router.add_get('/live.json', handle_live_json)
     app.router.add_get('/history',   handle_history)
     app.router.add_get('/export',    handle_export)
     return app
