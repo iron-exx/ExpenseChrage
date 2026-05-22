@@ -31,11 +31,11 @@ In Dolibarr muss **kein** zusätzliches Modul aktiv sein. Das wallboxbilling-Mod
 
 1. Anmelden als **Admin**.
 2. *Home → Konfiguration → Module/Anwendungen → Externes Modul hinzufügen*.
-3. `module_wallboxbilling-1.1.2.zip` hochladen.
+3. `module_wallboxbilling-1.1.3.zip` hochladen.
 4. Modul **aktivieren** (orangenen Schalter klicken).
 5. Verify: `https://<dolibarr>/custom/wallboxbilling/receive.php` aufrufen → muss zurückgeben:
    ```json
-   {"status":"ok","version":"1.1.2","mode":"direct-to-expensereport","endpoint":"wallboxbilling/receive.php",...}
+   {"status":"ok","version":"1.1.3","mode":"direct-to-expensereport","endpoint":"wallboxbilling/receive.php",...}
    ```
 
 ### 2.1 — API-Service-User anlegen

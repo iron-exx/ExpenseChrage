@@ -9,7 +9,7 @@
  *  und sind Soft-Deletable für §147-AO-Aufbewahrungspflicht (10 Jahre).
  *
  *  @author    Wallbox-Dolibarr
- *  @version   1.1.2
+ *  @version   1.1.3
  */
 
 require_once DOL_DOCUMENT_ROOT.'/core/modules/DolibarrModules.class.php';
@@ -36,7 +36,7 @@ class modWallboxbilling extends DolibarrModules
         $this->name = preg_replace('/^mod/i', '', get_class($this)); // → 'Wallboxbilling'
         $this->description = 'WallboxbillingDescription'; // wird über lang-Datei aufgelöst
 
-        $this->version = '1.1.2';
+        $this->version = '1.1.3';
         // const_name muss ein gültiger SQL/PHP-Konstanten-Name sein —
         // strtoupper(name) enthält Leerzeichen, daher fix auf den Modul-Slug.
         $this->const_name = 'MAIN_MODULE_'.strtoupper($this->name); // MAIN_MODULE_WALLBOXBILLING

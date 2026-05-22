@@ -185,6 +185,60 @@ try {
     // Sessions werden jetzt vom HA-Addon direkt in die Spesenabrechnung
     // geschrieben, kein manueller Anstoß mehr nötig.
 
+    // GHOST-SESSIONS BEREINIGEN: löscht 0-kWh-Zeilen die durch fehlerhafte
+    // Phantom-Ladungen (Karte gelesen ohne tatsächliche Ladung) in
+    // Spesenabrechnungen gelandet sind. Filter: qty=0 + unser [wbx:]-Marker
+    // im Comment → garantiert eine vom Modul erzeugte Geisterzeile.
+    if ($action === 'cleanup_ghost_lines' && !empty($submitted_token) && $token_ok) {
+        // Erst die betroffenen Reports zwischenspeichern für Summen-Update
+        $resReports = $db->query(
+            "SELECT DISTINCT fk_expensereport FROM ".MAIN_DB_PREFIX."expensereport_det"
+            ." WHERE qty = 0 AND comments LIKE '%[wbx:%'"
+        );
+        $affectedReports = array();
+        if ($resReports) {
+            while ($r = $db->fetch_object($resReports)) {
+                $affectedReports[] = (int) $r->fk_expensereport;
+            }
+        }
+
+        // Ghost-Zeilen zählen + löschen
+        $resCount = $db->query(
+            "SELECT COUNT(*) AS cnt FROM ".MAIN_DB_PREFIX."expensereport_det"
+            ." WHERE qty = 0 AND comments LIKE '%[wbx:%'"
+        );
+        $deleted = 0;
+        if ($resCount && ($oC = $db->fetch_object($resCount))) {
+            $deleted = (int) $oC->cnt;
+        }
+
+        if ($deleted > 0) {
+            $db->query(
+                "DELETE FROM ".MAIN_DB_PREFIX."expensereport_det"
+                ." WHERE qty = 0 AND comments LIKE '%[wbx:%'"
+            );
+
+            // Summen in den betroffenen Reports neu berechnen
+            foreach ($affectedReports as $rid) {
+                $db->query(
+                    "UPDATE ".MAIN_DB_PREFIX."expensereport er"
+                    ." SET er.total_ht  = (SELECT COALESCE(SUM(d.total_ht),  0) FROM ".MAIN_DB_PREFIX."expensereport_det d WHERE d.fk_expensereport = ".(int)$rid."),"
+                    ."     er.total_ttc = (SELECT COALESCE(SUM(d.total_ttc), 0) FROM ".MAIN_DB_PREFIX."expensereport_det d WHERE d.fk_expensereport = ".(int)$rid.")"
+                    ." WHERE er.rowid = ".(int)$rid
+                );
+            }
+
+            dol_syslog('wallboxbilling: '.$deleted.' Ghost-Zeilen aus '.count($affectedReports).' Reports entfernt', LOG_INFO);
+            setEventMessages(
+                $deleted.' Ghost-Zeile(n) (0 kWh) aus '.count($affectedReports).' Spesenabrechnung(en) entfernt. '
+                .'Summen wurden neu berechnet.',
+                null, 'mesgs'
+            );
+        } else {
+            setEventMessages('Keine Ghost-Zeilen gefunden — Spesenabrechnungen sind sauber.', null, 'mesgs');
+        }
+    }
+
     if ($action === 'uninstall_module' && !empty($submitted_token) && $token_ok) {
         $confirm = GETPOST('confirm_uninstall', 'alpha');
         if ($confirm !== 'JA') {
@@ -380,6 +434,36 @@ if ($resUsers) {
     $db->free($resUsers);
 }
 print '</table>';
+
+// --- Ghost-Sessions aus Spesenabrechnungen bereinigen ---
+// Zählt vorab wie viele Ghost-Zeilen existieren um den Button informativ zu beschriften
+$ghostCount = 0;
+$resGhostCount = $db->query(
+    "SELECT COUNT(*) AS cnt FROM ".MAIN_DB_PREFIX."expensereport_det"
+    ." WHERE qty = 0 AND comments LIKE '%[wbx:%'"
+);
+if ($resGhostCount && ($oG = $db->fetch_object($resGhostCount))) {
+    $ghostCount = (int) $oG->cnt;
+}
+
+print '<br>';
+print load_fiche_titre('Spesenabrechnungen bereinigen');
+print '<p class="opacitymedium small" style="margin:0 0 10px 0">'
+    .'Entfernt 0-kWh-Zeilen die vor 1.2.2 durch fehlerhaft erfasste Phantom-Ladungen '
+    .'(Karte gelesen ohne Ladung) in den Spesenabrechnungen gelandet sind. '
+    .'Erkannt am <code>[wbx:...]</code>-Marker im Kommentar — andere Positionen bleiben unangetastet. '
+    .'Summen der betroffenen Reports werden automatisch neu berechnet.'
+    .'</p>';
+print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'" style="margin-bottom:8px">';
+print '<input type="hidden" name="token" value="'.$token.'">';
+print '<input type="hidden" name="action" value="cleanup_ghost_lines">';
+if ($ghostCount > 0) {
+    print '<input type="submit" class="button" value="'.$ghostCount.' Ghost-Zeile(n) jetzt entfernen"';
+    print ' onclick="return confirm(\''.$ghostCount.' 0-kWh-Zeile(n) wirklich aus den Spesenabrechnungen löschen?\');">';
+} else {
+    print '<input type="submit" class="button" value="Keine Ghost-Zeilen vorhanden" disabled style="opacity:0.5;cursor:not-allowed">';
+}
+print '</form>';
 
 // --- Modul deaktivieren ---
 print '<br>';
