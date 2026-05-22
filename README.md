@@ -3,7 +3,7 @@
 RFID-basierte Abrechnung von Wallbox-Ladevorgängen — Sessions werden vom Home-Assistant-Addon **direkt in die Dolibarr-Spesenabrechnung** des jeweiligen Mitarbeiters geschrieben.
 
 ![Dolibarr-Modul](https://img.shields.io/badge/Dolibarr--Modul-1.1.2-blue)
-![HA-Addon](https://img.shields.io/badge/HA--Addon-1.2.1-blue)
+![HA-Addon](https://img.shields.io/badge/HA--Addon-1.2.2-blue)
 ![Dolibarr](https://img.shields.io/badge/Dolibarr-20.x--22.x-green)
 ![Python](https://img.shields.io/badge/Python-3.12+-green)
 
@@ -97,7 +97,8 @@ Im HA-Addon stehen drei Tabs zur Verfügung:
    - Wallbox-Status (`sensor.alfen_eve_main_state_socket_1`) wechselt auf `Available`, `Finishing`, `Stopped`, `Faulted`, … (substring-Match auf `charging`/`idle`/etc.), **oder**
    - RFID wechselt zurück auf `No Tag` (Karte abgezogen)
    - `total_kwh = end_zähler − start_zähler`
-5. **Transmit** (alle 5 min oder sofort):
+5. **Ghost-Session-Filter**: Sessions unter `min_session_kwh` (Default 0.05 kWh) werden als `discarded` markiert und NICHT übertragen — passiert wenn die Karte gehalten wird ohne dass eine Ladung tatsächlich beginnt
+6. **Transmit** (alle 5 min oder sofort):
    - POST an `receive.php` mit `{rfid_hash, wallbox_id, start_time, end_time, kwh}`
    - PHP-Endpoint: RFID→User → Spesenabrechnung suchen/anlegen → Zeile rein
    - Bei Erfolg: `transmitted_at` lokal gesetzt

@@ -209,15 +209,17 @@ class HomeAssistantWebsocket:
 
 
 async def _end_active_session(reason: str):
-    """Beendet die aktive Session mit dem aktuellen Energie-Zählerstand."""
+    """Beendet die aktive Session mit dem aktuellen Energie-Zählerstand.
+    Sessions mit < min_session_kwh werden als 'discarded' markiert."""
     sensor_energy = current_config.get('sensor_energy', _DEFAULT_SENSOR_ENERGY)
+    min_kwh       = float(current_config.get('min_session_kwh', 0.05))
     energy_state  = await ha_ws.get_state(sensor_energy)
     try:
         end_energy = float(energy_state.get('state', 0)) if energy_state else 0.0
     except (ValueError, TypeError):
         end_energy = 0.0
 
-    completed = session_manager.end_session(end_energy)
+    completed = session_manager.end_session(end_energy, min_kwh=min_kwh)
     if completed:
         _LOGGER.info("Ladevorgang beendet (%s): Session #%s, %.3f kWh",
                      reason, completed['id'], completed['total_kwh'])

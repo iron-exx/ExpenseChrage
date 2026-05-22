@@ -47,6 +47,7 @@ sensor_state:  sensor.alfen_eve_main_state_socket_1
 | `dolibarr_url` | Basis-URL, ohne `/custom/wallboxbilling/...` Pfad |
 | `api_token` | DOLAPIKEY eines Dolibarr-Service-Users |
 | `transmit_interval` | Sekunden zwischen Retry-Loops (Default 300 = 5 min) |
+| `min_session_kwh` | Mindest-kWh ab dem eine Session als echte Ladung gewertet wird (Default 0.05). Karte gelesen ohne Anschluss → Session wird als `discarded` markiert, nicht übertragen |
 | `sensor_rfid` | HA-Entity für die RFID-Lesung (liefert Tag-ID oder `No Tag`) |
 | `sensor_energy` | HA-Entity für den kumulativen Energiezähler in kWh |
 | `sensor_state` | HA-Entity für den Wallbox-Status (Available / Charging / …) |

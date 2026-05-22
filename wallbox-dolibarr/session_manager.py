@@ -286,15 +286,20 @@ class SessionManager:
                        session_id, rfid_hash[:16], start_energy_kwh)
         return session_id
 
-    def end_session(self, end_energy_kwh: float) -> Optional[Dict[str, Any]]:
+    def end_session(self, end_energy_kwh: float, min_kwh: float = 0.05) -> Optional[Dict[str, Any]]:
         """
-        Beendet die aktive Lade-Session (HA-05, HA-06)
+        Beendet die aktive Lade-Session.
 
         Args:
             end_energy_kwh: Energie-Zählerstand bei Ende
+            min_kwh:        Mindest-Verbrauch (Default 0.05 kWh = 50 Wh) ab dem
+                            die Session als echte Ladung gewertet wird. Sessions
+                            unterhalb werden als 'discarded' markiert — passiert
+                            z.B. wenn jemand die RFID-Karte hält, ohne dass eine
+                            Ladung tatsächlich beginnt (Auto nie angesteckt).
 
         Returns:
-            Session-Dict mit berechneten Werten oder None
+            Session-Dict bei echter Ladung, None bei Verwurf oder ohne aktive Session
         """
         active = self.get_active_session()
         if not active:
@@ -302,11 +307,30 @@ class SessionManager:
             return None
 
         end_time = datetime.now().replace(microsecond=0).isoformat()
-        total_kwh = end_energy_kwh - active['start_energy_kwh']
-        total_kwh = max(0.0, total_kwh)  # Negativer Wert verhindern
+        total_kwh = max(0.0, end_energy_kwh - active['start_energy_kwh'])
 
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
+
+        # Ghost-Session erkennen: RFID gelesen aber zu wenig / nichts geladen
+        if total_kwh < min_kwh:
+            # transmitted_at sofort setzen, damit die Session NIE an Dolibarr
+            # geschickt wird (Retry-Loop überspringt sie).
+            now = end_time
+            cursor.execute('''
+                UPDATE sessions
+                SET end_time = ?, end_energy_kwh = ?, total_kwh = ?,
+                    status = 'discarded', transmitted_at = ?
+                WHERE id = ?
+            ''', (end_time, end_energy_kwh, total_kwh, now, active['id']))
+            conn.commit()
+            conn.close()
+            self._logger.info(
+                "Session %s verworfen: nur %.3f kWh (< %.3f kWh Schwellwert) — "
+                "kein echter Ladevorgang, wird nicht übertragen",
+                active['id'], total_kwh, min_kwh
+            )
+            return None
 
         cursor.execute('''
             UPDATE sessions
@@ -422,11 +446,13 @@ class SessionManager:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        # Sessions finden: end_time IS NOT NULL und transmitted_at IS NULL
+        # Sessions finden: abgeschlossen (NICHT discarded/incomplete) und noch nicht übertragen
         cursor.execute('''
             SELECT id, rfid_hash, wallbox_id, start_time, end_time, total_kwh
             FROM sessions
-            WHERE end_time IS NOT NULL AND transmitted_at IS NULL
+            WHERE status = 'completed'
+              AND end_time IS NOT NULL
+              AND transmitted_at IS NULL
         ''')
 
         rows = cursor.fetchall()

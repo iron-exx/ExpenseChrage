@@ -80,6 +80,7 @@ In Dolibarr muss **kein** zusätzliches Modul aktiv sein. Das wallboxbilling-Mod
    dolibarr_url: "https://erp.example.com"
    api_token: "<DOLAPIKEY aus 2.1>"
    transmit_interval: 300            # alle 5 min an Dolibarr senden
+   min_session_kwh: 0.05             # Sessions unter 50 Wh werden verworfen (Ghost-Filter)
    sensor_rfid:   sensor.alfen_eve_tag_socket_1
    sensor_energy: sensor.alfen_eve_meter_reading_socket_1
    sensor_state:  sensor.alfen_eve_main_state_socket_1

@@ -280,11 +280,20 @@ def _build_history_page(session_manager, year, month, base_href=''):
             time_str = (s.get('start_time') or '')[11:16]
             rid      = (s.get('rfid_hash') or '')[:12] + '…'
             wbx      = s.get('wallbox_id') or '—'
-            tag      = ('<span class="tag tag-ok">✓ übertragen</span>'
-                        if s.get('transmitted_at')
-                        else '<span class="tag tag-pending">⏳ ausstehend</span>')
+            status   = (s.get('status') or '').lower()
+            if status == 'discarded':
+                tag = ('<span class="tag" style="background:#fdecea;color:#c0392b" '
+                       'title="Karte gelesen, aber zu wenig kWh — nicht übertragen">'
+                       '⊘ verworfen</span>')
+                row_style = ' style="opacity:0.55"'
+            elif s.get('transmitted_at'):
+                tag = '<span class="tag tag-ok">✓ übertragen</span>'
+                row_style = ''
+            else:
+                tag = '<span class="tag tag-pending">⏳ ausstehend</span>'
+                row_style = ''
             table_rows += (
-                f'<tr><td>{date}<br><span style="color:#aaa;font-size:11px">{time_str}</span></td>'
+                f'<tr{row_style}><td>{date}<br><span style="color:#aaa;font-size:11px">{time_str}</span></td>'
                 f'<td style="font-size:11px;color:#888">{rid}</td>'
                 f'<td>{wbx}</td>'
                 f'<td style="font-weight:700;color:#03a9f4">{kwh:.3f}</td>'
@@ -541,7 +550,9 @@ def create_app(session_manager, config, api_state):
             rfid_s  = (s.get('rfid_hash') or '')[:16] + '…'
             wbx_s   = s.get('wallbox_id') or ''
             kwh_s   = f"{(s.get('total_kwh') or 0):.3f}".replace('.', ',')
-            status  = 'übertragen' if s.get('transmitted_at') else 'ausstehend'
+            status  = ('verworfen' if (s.get('status') or '').lower() == 'discarded'
+                       else 'übertragen' if s.get('transmitted_at')
+                       else 'ausstehend')
             tx_time = (s.get('transmitted_at') or '')[:16]
             writer.writerow([date_s, time_s, rfid_s, wbx_s, kwh_s, status, tx_time])
 
