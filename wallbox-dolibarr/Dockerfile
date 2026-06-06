@@ -15,16 +15,15 @@ LABEL \
   io.hass.arch="${BUILD_ARCH}" \
   org.opencontainers.image.source="https://github.com/iron-exx/evcharge-dolibarr-invoice"
 
-# Alle Abhängigkeiten über apk (kein pip nötig, PEP-668-kompatibel).
+# Alle Abhängigkeiten über apk. 5-fach-Retry gegen transiente Aussetzer.
 #
-# WICHTIG — DNS-Workaround: Auf manchen HA-Hosts kann der Build-Container
-# dl-cdn.alpinelinux.org nicht auflösen ("DNS: transient error"), obwohl das
-# Base-Image von ghcr.io problemlos lädt (kaputtes/IPv6-DNS im Build-Netz).
-# Daher setzen wir im Build-Schritt explizit öffentliche Resolver in
-# /etc/resolv.conf (wirkt nur während dieses RUN, das Laufzeit-DNS des
-# Containers bleibt unberührt). Zusätzlich 5-fach-Retry gegen Aussetzer.
-RUN printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\nnameserver 9.9.9.9\n' > /etc/resolv.conf; \
-    for i in 1 2 3 4 5; do \
+# HINWEIS: Wenn dieser Schritt mit "dl-cdn.alpinelinux.org DNS: transient
+# error" fehlschlägt, ist das DNS des HA-BUILD-Containers kaputt (häufig
+# IPv6) — KEIN Fehler dieses Addons. Entweder Host-DNS reparieren
+# (ha dns options --servers dns://1.1.1.1 && ha dns restart) ODER das
+# vorgebaute Image aus GHCR nutzen (siehe image:-Feld in config.yaml,
+# wird per GitHub Actions gebaut und vom HA-Host nur noch gepullt).
+RUN for i in 1 2 3 4 5; do \
       echo "apk-Versuch $i/5..." && \
       apk add --no-cache \
         python3 \

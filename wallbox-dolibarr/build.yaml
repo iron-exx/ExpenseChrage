@@ -1,0 +1,7 @@
+# Base-Images pro Architektur für den HA-Builder (GitHub Actions).
+# Werden als BUILD_FROM an das Dockerfile übergeben.
+build_from:
+  aarch64: ghcr.io/home-assistant/aarch64-base:3.23
+  amd64: ghcr.io/home-assistant/amd64-base:3.23
+labels:
+  org.opencontainers.image.source: https://github.com/iron-exx/evcharge-dolibarr-invoice
