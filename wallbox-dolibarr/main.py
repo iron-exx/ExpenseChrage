@@ -26,7 +26,6 @@ import json
 import logging
 import os
 import sys
-import yaml
 from datetime import datetime
 from typing import Dict, Any, Optional
 

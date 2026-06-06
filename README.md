@@ -3,7 +3,7 @@
 RFID-basierte Abrechnung von Wallbox-Ladevorgängen — Sessions werden vom Home-Assistant-Addon **direkt in die Dolibarr-Spesenabrechnung** des jeweiligen Mitarbeiters geschrieben.
 
 ![Dolibarr-Modul](https://img.shields.io/badge/Dolibarr--Modul-1.1.4-blue)
-![HA-Addon](https://img.shields.io/badge/HA--Addon-1.2.6-blue)
+![HA-Addon](https://img.shields.io/badge/HA--Addon-1.2.7-blue)
 ![Dolibarr](https://img.shields.io/badge/Dolibarr-20.x--22.x-green)
 ![Python](https://img.shields.io/badge/Python-3.12+-green)
 

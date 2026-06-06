@@ -26,11 +26,10 @@ RUN for i in 1 2 3 4 5; do \
         python3 \
         py3-aiohttp \
         py3-requests \
-        py3-yaml \
         sqlite-libs \
         ca-certificates \
       && break || { echo "apk fehlgeschlagen (Versuch $i) — warte 10s"; sleep 10; }; \
-    done && python3 --version
+    done && python3 -c "import aiohttp, requests, sqlite3; print('deps OK', __import__('sys').version)"
 
 # Addon-Dateien kopieren
 COPY main.py            /usr/local/bin/main.py
