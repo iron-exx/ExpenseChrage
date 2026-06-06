@@ -16,11 +16,15 @@ LABEL \
   org.opencontainers.image.source="https://github.com/iron-exx/evcharge-dolibarr-invoice"
 
 # Alle Abhängigkeiten über apk (kein pip nötig, PEP-668-kompatibel).
-# Retry-Schleife (5 Versuche) gegen transiente DNS-/Netzwerk-Aussetzer beim
-# Laden des Alpine-Paketindex (dl-cdn.alpinelinux.org). Vor jedem Versuch wird
-# der Index frisch geholt; bei DNS-Hängern wartet sie und versucht es erneut,
-# statt den ganzen Addon-Build abzubrechen.
-RUN for i in 1 2 3 4 5; do \
+#
+# WICHTIG — DNS-Workaround: Auf manchen HA-Hosts kann der Build-Container
+# dl-cdn.alpinelinux.org nicht auflösen ("DNS: transient error"), obwohl das
+# Base-Image von ghcr.io problemlos lädt (kaputtes/IPv6-DNS im Build-Netz).
+# Daher setzen wir im Build-Schritt explizit öffentliche Resolver in
+# /etc/resolv.conf (wirkt nur während dieses RUN, das Laufzeit-DNS des
+# Containers bleibt unberührt). Zusätzlich 5-fach-Retry gegen Aussetzer.
+RUN printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\nnameserver 9.9.9.9\n' > /etc/resolv.conf; \
+    for i in 1 2 3 4 5; do \
       echo "apk-Versuch $i/5..." && \
       apk add --no-cache \
         python3 \
@@ -28,8 +32,9 @@ RUN for i in 1 2 3 4 5; do \
         py3-requests \
         sqlite-libs \
         ca-certificates \
-      && break || { echo "apk fehlgeschlagen (Versuch $i) — warte 10s"; sleep 10; }; \
-    done && python3 -c "import aiohttp, requests, sqlite3; print('deps OK', __import__('sys').version)"
+      && break || { echo "apk fehlgeschlagen (Versuch $i) — warte 8s"; sleep 8; }; \
+    done; \
+    python3 -c "import aiohttp, requests, sqlite3; print('deps OK', __import__('sys').version)"
 
 # Addon-Dateien kopieren
 COPY main.py            /usr/local/bin/main.py
