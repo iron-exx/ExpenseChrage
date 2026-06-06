@@ -2,8 +2,8 @@
 
 RFID-basierte Abrechnung von Wallbox-Ladevorgängen — Sessions werden vom Home-Assistant-Addon **direkt in die Dolibarr-Spesenabrechnung** des jeweiligen Mitarbeiters geschrieben.
 
-![Dolibarr-Modul](https://img.shields.io/badge/Dolibarr--Modul-1.1.3-blue)
-![HA-Addon](https://img.shields.io/badge/HA--Addon-1.2.4-blue)
+![Dolibarr-Modul](https://img.shields.io/badge/Dolibarr--Modul-1.1.4-blue)
+![HA-Addon](https://img.shields.io/badge/HA--Addon-1.2.5-blue)
 ![Dolibarr](https://img.shields.io/badge/Dolibarr-20.x--22.x-green)
 ![Python](https://img.shields.io/badge/Python-3.12+-green)
 
@@ -56,13 +56,13 @@ Jede Ladung landet sofort als Position im Spesenreport des Mitarbeiters. Pro Mon
 
 ### 1. Dolibarr-Modul
 
-1. `module_wallboxbilling-1.1.3.zip` im Dolibarr-Modulmanager hochladen
+1. `module_wallboxbilling-1.1.4.zip` im Dolibarr-Modulmanager hochladen
 2. Modul **aktivieren**
 3. Unter „Wallbox-Abrechnung Konfiguration":
    - Default-Preis pro kWh setzen
    - RFID-Karten pro Mitarbeiter zuordnen
 
-Verify: `https://<dolibarr>/custom/wallboxbilling/receive.php` → muss `{"version":"1.1.3","mode":"direct-to-expensereport"}` zeigen.
+Verify: `https://<dolibarr>/custom/wallboxbilling/receive.php` → muss `{"version":"1.1.4","mode":"direct-to-expensereport"}` zeigen.
 
 ### 2. Home Assistant Addon
 
@@ -134,7 +134,7 @@ Wallbox-Dolibarr/
 │   ├── utils/hash.py                        # SHA-256
 │   ├── Dockerfile
 │   └── config.yaml
-└── module_wallboxbilling-1.1.3.zip          # aktuelles Dolibarr-Modul
+└── module_wallboxbilling-1.1.4.zip          # aktuelles Dolibarr-Modul
 ```
 
 ## Lizenz

@@ -69,27 +69,53 @@ _PENDING_AUTH_WINDOW = 600  # 10 Minuten
 # als Fallback verwendet, falls der RFID-Event verpasst wurde.
 _pending_auth = None  # dict: {'rfid_hex': str, 'time': float}
 
+# Gecachter Energie-Zählerstand (kWh). Wird laufend aus den state_changed-
+# Events des Energiesensors aktualisiert UND beim Start einmalig geseedet.
+# Start/Ende einer Session lesen NUR diesen Cache — niemals get_state()
+# während der Event-Schleife (das würde Frames stehlen, siehe websocket).
+_latest_energy = None  # float oder None wenn (noch) kein gültiger Wert vorliegt
+
+
+def _parse_energy(value):
+    """Sensor-Wert → float kWh oder None bei 'unavailable'/'unknown'/Müll."""
+    if value is None:
+        return None
+    s = str(value).strip().lower()
+    if s in ('', 'unavailable', 'unknown', 'none', 'nan'):
+        return None
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return None
+
 # Wallbox-Status: substring-Match (case-insensitive) gegen den echten Sensor-Wert.
 # Alfen-Wallbox-States: "Available", "Preparing", "Charging Power On",
 # "Charging Stopped", "Suspended EV", "Suspended EVSE", "Finishing",
 # "Reserved", "Unavailable", "Faulted". Wir gruppieren nach Verhalten:
-def _is_charging_state(s):
-    """True wenn die Wallbox aktiv lädt (Energie fließt)."""
-    if not s:
-        return False
-    sl = s.lower()
-    return 'charging' in sl and 'stopped' not in sl
+# Alfen-States die das ENDE einer Ladung markieren. Wird VOR _is_charging_state
+# geprüft (Vorrang), da z.B. "Charging Terminating" zwar 'charging' enthält,
+# aber das Lade-Ende bedeutet.
+_IDLE_KEYWORDS = [
+    'available', 'idle', 'finished', 'finishing', 'terminating',
+    'stopped', 'disconnect', 'unavailable', 'faulted', 'suspend', 'error',
+]
 
 def _is_idle_state(s):
-    """True wenn die Wallbox keine Session mehr aktiv hat (Ladung abgeschlossen,
-    Stecker raus oder Karte entfernt)."""
+    """True wenn die Wallbox keine aktive Ladung (mehr) hat: abgeschlossen,
+    am Beenden, Stecker raus, Fehler oder pausiert."""
     if not s:
         return False
     sl = s.lower()
-    return any(k in sl for k in [
-        'available', 'idle', 'finished', 'finishing', 'stopped',
-        'disconnected', 'unavailable', 'faulted'
-    ])
+    return any(k in sl for k in _IDLE_KEYWORDS)
+
+def _is_charging_state(s):
+    """True wenn die Wallbox aktiv lädt (Energie fließt). Idle-Zustände haben
+    Vorrang — 'Charging Terminating' zählt z.B. als Ende, nicht als Laden."""
+    if not s:
+        return False
+    if _is_idle_state(s):
+        return False
+    return 'charging' in s.lower()
 
 # Globale Variablen für Session-Tracking
 session_manager = None
@@ -135,6 +161,13 @@ class HomeAssistantWebsocket:
         self.session_id: Optional[str] = None
         self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
         self._session: Optional[aiohttp.ClientSession] = None
+        # HA verlangt streng monoton steigende, eindeutige Message-IDs pro
+        # Verbindung. Ein einziger Zähler für alle Kommandos (subscribe, get_states).
+        self._msg_id = 0
+
+    def _next_id(self) -> int:
+        self._msg_id += 1
+        return self._msg_id
 
     async def connect(self):
         """Verbindet sich mit HA Websocket API"""
@@ -168,11 +201,16 @@ class HomeAssistantWebsocket:
             raise
 
     async def subscribe_entities(self, callback):
-        """Abonniert Entitäts-Updates via Websocket (D-10, event-basiert)"""
-        # Subscribe to state changes
-        msg_id = 1
+        """Abonniert Entitäts-Updates via Websocket (D-10, event-basiert).
+
+        WICHTIG: Sobald diese Schleife läuft, ist sie der EINZIGE Leser des
+        Sockets. get_state()/get_all_states() dürfen NICHT mehr aufgerufen
+        werden (sie würden Frames stehlen) — stattdessen den gecachten Wert
+        aus dem Event-Stream nutzen.
+        """
+        sub_id = self._next_id()
         await self._ws.send_json({
-            'id': msg_id,
+            'id': sub_id,
             'type': 'subscribe_events',
             'event_type': 'state_changed'
         })
@@ -183,7 +221,7 @@ class HomeAssistantWebsocket:
 
         _LOGGER.info("Erfolgreich Entitäts-Updates abonniert")
 
-        # Nachrichten verarbeiten
+        # Nachrichten verarbeiten — alle Frames gehören jetzt diesem Loop
         while True:
             msg = await self._ws.receive_json()
             if msg.get('type') == 'event':
@@ -194,21 +232,32 @@ class HomeAssistantWebsocket:
                 if entity_id and new_state:
                     await callback(entity_id, new_state)
 
-    async def get_state(self, entity_id: str) -> Optional[Dict[str, Any]]:
-        """Holt den aktuellen State einer Entität"""
-        msg_id = 2
-        await self._ws.send_json({
-            'id': msg_id,
-            'type': 'get_states'
-        })
+    async def get_all_states(self) -> Dict[str, Any]:
+        """Holt EINMALIG alle Entitäts-States als dict {entity_id: state}.
 
-        msg = await self._ws.receive_json()
-        if msg.get('type') == 'result' and msg.get('success'):
-            states = msg.get('result', [])
-            for state in states:
-                if state.get('entity_id') == entity_id:
-                    return state
-        return None
+        NUR vor dem Start der subscribe_entities-Schleife aufrufen — danach
+        konkurriert das receive_json() mit dem Event-Loop. Demultiplext nach
+        der eigenen Message-ID, damit zwischenzeitliche Frames korrekt
+        übersprungen werden.
+        """
+        req_id = self._next_id()
+        await self._ws.send_json({'id': req_id, 'type': 'get_states'})
+
+        # Lese bis das 'result' mit UNSERER id kommt (andere Frames überspringen)
+        for _ in range(50):
+            msg = await self._ws.receive_json()
+            if msg.get('id') == req_id and msg.get('type') == 'result':
+                if not msg.get('success'):
+                    _LOGGER.warning("get_states fehlgeschlagen: %s", msg.get('error'))
+                    return {}
+                return {s.get('entity_id'): s for s in msg.get('result', [])}
+        _LOGGER.warning("get_states: kein passendes result nach 50 Frames")
+        return {}
+
+    async def get_state(self, entity_id: str) -> Optional[Dict[str, Any]]:
+        """Einzelnen State holen (nur vor dem subscribe-Loop verwenden)."""
+        states = await self.get_all_states()
+        return states.get(entity_id)
 
     async def disconnect(self):
         """Trennt die Verbindung"""
@@ -220,20 +269,26 @@ class HomeAssistantWebsocket:
 
 
 async def _start_session_for(rfid_hex: str, source: str):
-    """Startet eine neue Session falls noch keine aktiv ist. Liest den
-    Energie-Zählerstand atomar aus dem konfigurierten Sensor."""
+    """Startet eine neue Session falls noch keine aktiv ist. Der Start-
+    Zählerstand kommt aus dem gecachten Energie-Wert (_latest_energy), der
+    laufend aus dem Event-Stream aktualisiert wird — NICHT per get_state()."""
     if session_manager.get_active_session():
         return None  # bereits aktiv — kein Doppelstart
 
-    sensor_energy = current_config.get('sensor_energy', _DEFAULT_SENSOR_ENERGY)
-    energy_state  = await ha_ws.get_state(sensor_energy)
-    try:
-        start_energy = float(energy_state.get('state', 0)) if energy_state else 0.0
-    except (ValueError, TypeError):
-        start_energy = 0.0
+    if _latest_energy is None:
+        _LOGGER.warning(
+            "Session-Start (%s) ohne gültigen Energie-Zählerstand — Sensor '%s' "
+            "lieferte noch keinen Wert. Session wird gestartet, aber Start-Zähler=0; "
+            "Ende markiert sie ggf. als unvollständig.",
+            source, current_config.get('sensor_energy', _DEFAULT_SENSOR_ENERGY)
+        )
+    start_energy = _latest_energy if _latest_energy is not None else 0.0
 
     wallbox_id = current_config.get('wallbox_id', 'wallbox')
-    session_id = session_manager.start_session(rfid_hex, start_energy, wallbox_id=wallbox_id)
+    session_id = session_manager.start_session(
+        rfid_hex, start_energy, wallbox_id=wallbox_id,
+        start_energy_valid=(_latest_energy is not None)
+    )
     if session_id:
         _LOGGER.info("Ladevorgang gestartet (%s): Session #%s, Start-Zähler=%.3f kWh",
                      source, session_id, start_energy)
@@ -241,17 +296,17 @@ async def _start_session_for(rfid_hex: str, source: str):
 
 
 async def _end_active_session(reason: str):
-    """Beendet die aktive Session mit dem aktuellen Energie-Zählerstand.
-    Sessions mit < min_session_kwh werden als 'discarded' markiert."""
-    sensor_energy = current_config.get('sensor_energy', _DEFAULT_SENSOR_ENERGY)
-    min_kwh       = float(current_config.get('min_session_kwh', 0.05))
-    energy_state  = await ha_ws.get_state(sensor_energy)
-    try:
-        end_energy = float(energy_state.get('state', 0)) if energy_state else 0.0
-    except (ValueError, TypeError):
-        end_energy = 0.0
+    """Beendet die aktive Session mit dem gecachten Energie-Zählerstand.
+    - kWh = end − start aus dem Event-Stream-Cache
+    - Sessions ohne gültige Energie-Readings → 'incomplete' (sichtbar, nicht
+      still verworfen), echte Mini-Ladungen < min_session_kwh → 'discarded'."""
+    min_kwh = float(current_config.get('min_session_kwh', 0.05))
+    energy_valid = _latest_energy is not None
+    end_energy = _latest_energy if energy_valid else 0.0
 
-    completed = session_manager.end_session(end_energy, min_kwh=min_kwh)
+    completed = session_manager.end_session(
+        end_energy, min_kwh=min_kwh, end_energy_valid=energy_valid
+    )
     if completed:
         _LOGGER.info("Ladevorgang beendet (%s): Session #%s, %.3f kWh",
                      reason, completed['id'], completed['total_kwh'])
@@ -272,7 +327,7 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
       4. Alternativ: RFID wechselt auf "No Tag" → ebenfalls Session beenden
          (Karte abgezogen ohne State-Wechsel, z.B. bei Abbruch).
     """
-    global session_manager, current_config, ha_ws, api_state
+    global session_manager, current_config, ha_ws, api_state, _latest_energy
 
     sensor_rfid   = current_config.get('sensor_rfid',   _DEFAULT_SENSOR_RFID)
     sensor_energy = current_config.get('sensor_energy', _DEFAULT_SENSOR_ENERGY)
@@ -280,15 +335,16 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
 
     state_value = state.get('state')
 
-    # ----- Live-State für Web-Server pflegen --------------------------------
-    if api_state is not None:
-        if entity_id == sensor_energy:
-            try:
-                api_state['current_energy'] = float(state_value)
+    # ----- Energie-Cache + Live-State für Web-Server pflegen ----------------
+    if entity_id == sensor_energy:
+        parsed = _parse_energy(state_value)
+        if parsed is not None:
+            _latest_energy = parsed            # Cache für Session-Start/-Ende
+            if api_state is not None:
+                api_state['current_energy'] = parsed
                 api_state['last_update'] = datetime.now().isoformat(timespec='seconds')
-            except (TypeError, ValueError):
-                pass
-        elif entity_id == sensor_state:
+    elif entity_id == sensor_state:
+        if api_state is not None:
             api_state['wallbox_state'] = state_value
             api_state['last_update'] = datetime.now().isoformat(timespec='seconds')
 
@@ -324,6 +380,13 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
     if entity_id == sensor_state:
         active = session_manager.get_active_session()
 
+        # Idle hat VORRANG vor Charging — "Charging Terminating" zählt als Ende.
+        if _is_idle_state(state_value):
+            if active:
+                await _end_active_session(f'state={state_value}')
+            _pending_auth = None  # Auth verbraucht
+            return
+
         if _is_charging_state(state_value):
             # Wallbox lädt jetzt aktiv. Wenn KEINE Session läuft, aber eine
             # RFID kürzlich autorisiert wurde → Session nachträglich starten.
@@ -346,27 +409,16 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
                                 "evtl. vor Addon-Start gehalten?", state_value)
             return
 
-        if _is_idle_state(state_value):
-            if active:
-                await _end_active_session(f'state={state_value}')
-            # Pending nach Idle leeren — Auth ist verbraucht
-            _pending_auth = None
-            return
-
         _LOGGER.debug("Wallbox-State Zwischenzustand: '%s'", state_value)
         return
 
-    # ----- Energie-Sensor (nur loggen während aktiver Session) --------------
+    # ----- Energie-Sensor: Cache schon oben gepflegt; hier nur Debug-Log -----
     if entity_id == sensor_energy:
         active = session_manager.get_active_session()
-        if active:
-            try:
-                kwh = float(state_value) if state_value else 0.0
-                delta = kwh - float(active.get('start_energy_kwh') or 0.0)
-                _LOGGER.debug("Aktive Session #%s: Zähler=%.3f kWh, Geladen=%.3f kWh",
-                              active['id'], kwh, delta)
-            except (ValueError, TypeError):
-                pass
+        if active and _latest_energy is not None:
+            delta = _latest_energy - float(active.get('start_energy_kwh') or 0.0)
+            _LOGGER.debug("Aktive Session #%s: Zähler=%.3f kWh, Geladen=%.3f kWh",
+                          active['id'], _latest_energy, delta)
         return
 
 
@@ -374,7 +426,7 @@ async def check_startup_session():
     """Prüft beim Start ob eine aktive Session existiert UND ob die Wallbox
     aktuell lädt — fängt verlorene Sessions ab wenn das Addon während einer
     laufenden Ladung neugestartet wurde."""
-    global session_manager, api_client, _pending_auth
+    global session_manager, api_client, _pending_auth, _latest_energy
 
     # 1) Alte 'active' Sessions in SQLite als unvollständig markieren
     recovered_sessions = session_manager.recover_active_sessions()
@@ -384,20 +436,30 @@ async def check_startup_session():
             session_manager.mark_session_incomplete(session['id'], 'restart_recovery')
             _LOGGER.warning("Session %d als unvollständig markiert (Addon-Neustart)", session['id'])
 
-    # 2) Aktuellen Wallbox-Status + RFID prüfen — falls gerade geladen wird,
-    #    eine neue Session starten damit nichts verloren geht.
-    sensor_rfid  = current_config.get('sensor_rfid',  _DEFAULT_SENSOR_RFID)
-    sensor_state = current_config.get('sensor_state', _DEFAULT_SENSOR_STATE)
+    # 2) EINMALIGER Snapshot ALLER States (vor dem subscribe-Loop, konkurrenzfrei).
+    #    Seedet den Energie-Cache und prüft ob gerade geladen wird.
+    sensor_rfid   = current_config.get('sensor_rfid',   _DEFAULT_SENSOR_RFID)
+    sensor_state  = current_config.get('sensor_state',  _DEFAULT_SENSOR_STATE)
+    sensor_energy = current_config.get('sensor_energy', _DEFAULT_SENSOR_ENERGY)
     try:
-        rfid_now  = await ha_ws.get_state(sensor_rfid)
-        state_now = await ha_ws.get_state(sensor_state)
+        snapshot = await ha_ws.get_all_states()
     except Exception as exc:
-        _LOGGER.warning("Konnte aktuellen Wallbox-Zustand beim Start nicht lesen: %s", exc)
+        _LOGGER.warning("Konnte Wallbox-Zustand beim Start nicht lesen: %s", exc)
         return
 
-    rfid_val  = (rfid_now.get('state') if rfid_now else '') or ''
-    state_val = (state_now.get('state') if state_now else '') or ''
-    _LOGGER.info("Wallbox-Zustand beim Start: state='%s', rfid='%s'", state_val, rfid_val)
+    rfid_val   = (snapshot.get(sensor_rfid)  or {}).get('state', '') or ''
+    state_val  = (snapshot.get(sensor_state) or {}).get('state', '') or ''
+    energy_raw = (snapshot.get(sensor_energy) or {}).get('state')
+
+    # Energie-Cache seeden — ab jetzt hat Session-Start/-Ende einen gültigen Wert
+    seeded = _parse_energy(energy_raw)
+    if seeded is not None:
+        _latest_energy = seeded
+        if api_state is not None:
+            api_state['current_energy'] = seeded
+            api_state['last_update'] = datetime.now().isoformat(timespec='seconds')
+    _LOGGER.info("Wallbox-Zustand beim Start: state='%s', rfid='%s', zaehler=%s kWh",
+                 state_val, rfid_val, ('%.3f' % seeded) if seeded is not None else 'n/a')
 
     # Wenn gerade geladen wird UND ein gültiger Tag anliegt → Session starten
     if _is_charging_state(state_val):

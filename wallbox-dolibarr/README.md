@@ -54,7 +54,7 @@ sensor_state:  sensor.alfen_eve_main_state_socket_1
 ## Voraussetzungen
 
 - Home Assistant Core mit Alfen-Eve-Integration (oder kompatible Wallbox die drei vergleichbare Sensoren liefert)
-- Dolibarr 20+ mit installiertem `wallboxbilling`-Modul (Version 1.1.3+)
+- Dolibarr 20+ mit installiertem `wallboxbilling`-Modul (Version 1.1.4+)
 
 ## API-Endpoint (Dolibarr-Seite)
 

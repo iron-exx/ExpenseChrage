@@ -31,7 +31,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     echo json_encode([
         'status'   => 'ok',
-        'version'  => '1.1.3',
+        'version'  => '1.1.4',
         'mode'     => 'direct-to-expensereport',
         'endpoint' => 'wallboxbilling/receive.php',
         'message'  => 'POST with DOLAPIKEY header required for session upload',
@@ -133,9 +133,13 @@ if (!preg_match('/^[a-f0-9]{64}$/i', $rfidHash)) {
     echo json_encode(['error' => 'Invalid rfid_hash (must be SHA-256 hex, 64 chars)']);
     exit;
 }
-if ($kwh < 0) {
+// kwh muss > 0 sein — 0-kWh-Ladungen (Phantom-Sessions) werden abgelehnt,
+// damit keine 0,00-€-Zeilen in der Spesenabrechnung landen (Defense-in-Depth;
+// das HA-Addon filtert solche Sessions bereits vorher heraus).
+if ($kwh <= 0) {
+    dol_syslog('wallboxbilling receive: kwh<=0 abgelehnt (kwh='.$kwh.')', LOG_WARNING);
     http_response_code(400);
-    echo json_encode(['error' => 'kwh must be >= 0']);
+    echo json_encode(['success' => false, 'error' => 'kwh must be > 0', 'code' => 'ZERO_KWH']);
     exit;
 }
 if (!$startTs || !$endTs || $endTs <= $startTs) {

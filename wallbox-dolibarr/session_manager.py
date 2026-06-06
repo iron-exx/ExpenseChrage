@@ -76,19 +76,21 @@ class SessionManager:
                 total_kwh REAL,
                 status TEXT NOT NULL DEFAULT 'active',
                 created_at TEXT NOT NULL,
-                transmitted_at TEXT
+                transmitted_at TEXT,
+                start_energy_valid INTEGER NOT NULL DEFAULT 1
             )
         ''')
 
-        # Spalte transmitted_at hinzufügen falls Tabelle bereits existiert (Migration)
-        try:
-            cursor.execute('''
-                ALTER TABLE sessions ADD COLUMN transmitted_at TEXT
-            ''')
-            self._logger.info("Datenbank-Schema erweitert: transmitted_at hinzugefügt")
-        except sqlite3.OperationalError:
-            # Spalte existiert bereits
-            pass
+        # Migrationen für bereits existierende Tabellen (idempotent)
+        for col_ddl, col_name in [
+            ('ALTER TABLE sessions ADD COLUMN transmitted_at TEXT', 'transmitted_at'),
+            ('ALTER TABLE sessions ADD COLUMN start_energy_valid INTEGER NOT NULL DEFAULT 1', 'start_energy_valid'),
+        ]:
+            try:
+                cursor.execute(col_ddl)
+                self._logger.info("Datenbank-Schema erweitert: %s hinzugefügt", col_name)
+            except sqlite3.OperationalError:
+                pass  # Spalte existiert bereits
 
         # Index für rfid_hash (DB-02 Vorbereitung)
         cursor.execute('''
@@ -248,7 +250,9 @@ class SessionManager:
 
         return [dict(row) for row in rows]
 
-    def start_session(self, rfid_hex: str, start_energy_kwh: float, wallbox_id: str = "alfen_eve") -> Optional[int]:
+    def start_session(self, rfid_hex: str, start_energy_kwh: float,
+                      wallbox_id: str = "alfen_eve",
+                      start_energy_valid: bool = True) -> Optional[int]:
         """
         Startet eine neue Lade-Session (HA-03, HA-04)
 
@@ -256,6 +260,9 @@ class SessionManager:
             rfid_hex: RFID als Hex-String
             start_energy_kwh: Energie-Zählerstand bei Start
             wallbox_id: ID der Wallbox
+            start_energy_valid: False wenn der Zählerstand beim Start unbekannt
+                                war (Sensor lieferte keinen Wert) — Ende markiert
+                                die Session dann als unvollständig statt zu rechnen.
 
         Returns:
             Session-ID oder None bei Fehler
@@ -274,32 +281,41 @@ class SessionManager:
         cursor = conn.cursor()
 
         cursor.execute('''
-            INSERT INTO sessions (rfid_hash, wallbox_id, start_time, start_energy_kwh, status, created_at)
-            VALUES (?, ?, ?, ?, 'active', ?)
-        ''', (rfid_hash, wallbox_id, start_time, start_energy_kwh, created_at))
+            INSERT INTO sessions (rfid_hash, wallbox_id, start_time, start_energy_kwh,
+                                  status, created_at, start_energy_valid)
+            VALUES (?, ?, ?, ?, 'active', ?, ?)
+        ''', (rfid_hash, wallbox_id, start_time, start_energy_kwh, created_at,
+              1 if start_energy_valid else 0))
 
         session_id = cursor.lastrowid
         conn.commit()
         conn.close()
 
-        self._logger.info("Session gestartet: ID=%s, RFID=%s..., Energie=%.2f kWh",
-                       session_id, rfid_hash[:16], start_energy_kwh)
+        self._logger.info("Session gestartet: ID=%s, RFID=%s..., Energie=%.3f kWh (gültig=%s)",
+                       session_id, rfid_hash[:16], start_energy_kwh, start_energy_valid)
         return session_id
 
-    def end_session(self, end_energy_kwh: float, min_kwh: float = 0.05) -> Optional[Dict[str, Any]]:
+    def end_session(self, end_energy_kwh: float, min_kwh: float = 0.05,
+                    end_energy_valid: bool = True) -> Optional[Dict[str, Any]]:
         """
         Beendet die aktive Lade-Session.
 
         Args:
-            end_energy_kwh: Energie-Zählerstand bei Ende
-            min_kwh:        Mindest-Verbrauch (Default 0.05 kWh = 50 Wh) ab dem
-                            die Session als echte Ladung gewertet wird. Sessions
-                            unterhalb werden als 'discarded' markiert — passiert
-                            z.B. wenn jemand die RFID-Karte hält, ohne dass eine
-                            Ladung tatsächlich beginnt (Auto nie angesteckt).
+            end_energy_kwh:   Energie-Zählerstand bei Ende
+            min_kwh:          Mindest-Verbrauch (Default 0.05 kWh) ab dem die
+                              Session als echte Ladung gewertet wird. Sessions
+                              unterhalb → 'discarded' (z.B. Karte gehalten ohne
+                              Ladung).
+            end_energy_valid: False wenn der End-Zählerstand unbekannt war.
+
+        Status-Logik:
+          - Start- ODER End-Zähler ungültig → 'incomplete' (SICHTBAR, nicht
+            still verworfen — Admin kann manuell nachtragen).
+          - Gültige Reads, aber < min_kwh → 'discarded' (echte Ghost-Session).
+          - Sonst → 'completed' (wird übertragen).
 
         Returns:
-            Session-Dict bei echter Ladung, None bei Verwurf oder ohne aktive Session
+            Session-Dict NUR bei 'completed', sonst None.
         """
         active = self.get_active_session()
         if not active:
@@ -307,31 +323,47 @@ class SessionManager:
             return None
 
         end_time = datetime.now().replace(microsecond=0).isoformat()
+        start_valid = int(active.get('start_energy_valid', 1)) == 1
+        energy_trustworthy = start_valid and end_energy_valid
         total_kwh = max(0.0, end_energy_kwh - active['start_energy_kwh'])
 
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        # Ghost-Session erkennen: RFID gelesen aber zu wenig / nichts geladen
+        # Fall 1: Energie-Readings nicht vertrauenswürdig → incomplete (sichtbar)
+        if not energy_trustworthy:
+            cursor.execute('''
+                UPDATE sessions
+                SET end_time = ?, end_energy_kwh = ?, total_kwh = ?, status = 'incomplete'
+                WHERE id = ?
+            ''', (end_time, end_energy_kwh if end_energy_valid else None,
+                  total_kwh if energy_trustworthy else None, active['id']))
+            conn.commit()
+            conn.close()
+            self._logger.warning(
+                "Session %s unvollständig: Zählerstand ungültig (start_valid=%s, "
+                "end_valid=%s) — kWh nicht berechenbar, bitte manuell prüfen/nachtragen",
+                active['id'], start_valid, end_energy_valid
+            )
+            return None
+
+        # Fall 2: gültige Reads aber zu wenig geladen → discarded (echte Ghost-Session)
         if total_kwh < min_kwh:
-            # transmitted_at sofort setzen, damit die Session NIE an Dolibarr
-            # geschickt wird (Retry-Loop überspringt sie).
-            now = end_time
             cursor.execute('''
                 UPDATE sessions
                 SET end_time = ?, end_energy_kwh = ?, total_kwh = ?,
                     status = 'discarded', transmitted_at = ?
                 WHERE id = ?
-            ''', (end_time, end_energy_kwh, total_kwh, now, active['id']))
+            ''', (end_time, end_energy_kwh, total_kwh, end_time, active['id']))
             conn.commit()
             conn.close()
             self._logger.info(
-                "Session %s verworfen: nur %.3f kWh (< %.3f kWh Schwellwert) — "
-                "kein echter Ladevorgang, wird nicht übertragen",
+                "Session %s verworfen: nur %.3f kWh (< %.3f kWh) — keine echte Ladung",
                 active['id'], total_kwh, min_kwh
             )
             return None
 
+        # Fall 3: echte Ladung → completed
         cursor.execute('''
             UPDATE sessions
             SET end_time = ?, end_energy_kwh = ?, total_kwh = ?, status = 'completed'

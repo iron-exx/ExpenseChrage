@@ -363,6 +363,11 @@ def _build_history_page(session_manager, year, month, base_href=''):
                        'title="Karte gelesen, aber zu wenig kWh — nicht übertragen">'
                        '⊘ verworfen</span>')
                 row_style = ' style="opacity:0.55"'
+            elif status == 'incomplete':
+                tag = ('<span class="tag" style="background:#fff8e1;color:#b8860b" '
+                       'title="Zählerstand unbekannt — kWh nicht berechenbar, bitte manuell nachtragen">'
+                       '⚠ unvollständig</span>')
+                row_style = ' style="opacity:0.7"'
             elif s.get('transmitted_at'):
                 tag = '<span class="tag tag-ok">✓ übertragen</span>'
                 row_style = ''
@@ -532,7 +537,9 @@ def create_app(session_manager, config, api_state):
             rfid_s  = (s.get('rfid_hash') or '')[:16] + '…'
             wbx_s   = s.get('wallbox_id') or ''
             kwh_s   = f"{(s.get('total_kwh') or 0):.3f}".replace('.', ',')
-            status  = ('verworfen' if (s.get('status') or '').lower() == 'discarded'
+            _st = (s.get('status') or '').lower()
+            status  = ('verworfen' if _st == 'discarded'
+                       else 'unvollständig' if _st == 'incomplete'
                        else 'übertragen' if s.get('transmitted_at')
                        else 'ausstehend')
             tx_time = (s.get('transmitted_at') or '')[:16]
