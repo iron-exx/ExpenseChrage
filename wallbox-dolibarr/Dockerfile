@@ -9,20 +9,28 @@ ARG BUILD_REF
 
 LABEL \
   io.hass.name="Wallbox Dolibarr Invoice" \
-  io.hass.description="RFID-basierte Abrechnung von Wallbox-Ladevorgängen via Dolibarr" \
+  io.hass.description="Schreibt RFID-Ladevorgänge der Alfen Eve Wallbox direkt als Position in die Dolibarr-Spesenabrechnung des Mitarbeiters" \
   io.hass.type="addon" \
   io.hass.version="${BUILD_VERSION}" \
   io.hass.arch="${BUILD_ARCH}" \
   org.opencontainers.image.source="https://github.com/iron-exx/evcharge-dolibarr-invoice"
 
-# Alle Abhängigkeiten über apk (kein pip nötig, PEP-668-kompatibel)
-RUN apk add --no-cache \
-    python3 \
-    py3-aiohttp \
-    py3-requests \
-    py3-yaml \
-    sqlite-libs \
-    ca-certificates
+# Alle Abhängigkeiten über apk (kein pip nötig, PEP-668-kompatibel).
+# Retry-Schleife (5 Versuche) gegen transiente DNS-/Netzwerk-Aussetzer beim
+# Laden des Alpine-Paketindex (dl-cdn.alpinelinux.org). Vor jedem Versuch wird
+# der Index frisch geholt; bei DNS-Hängern wartet sie und versucht es erneut,
+# statt den ganzen Addon-Build abzubrechen.
+RUN for i in 1 2 3 4 5; do \
+      echo "apk-Versuch $i/5..." && \
+      apk add --no-cache \
+        python3 \
+        py3-aiohttp \
+        py3-requests \
+        py3-yaml \
+        sqlite-libs \
+        ca-certificates \
+      && break || { echo "apk fehlgeschlagen (Versuch $i) — warte 10s"; sleep 10; }; \
+    done && python3 --version
 
 # Addon-Dateien kopieren
 COPY main.py            /usr/local/bin/main.py
