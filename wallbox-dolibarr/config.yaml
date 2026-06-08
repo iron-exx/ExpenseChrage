@@ -1,8 +1,14 @@
 name: "Wallbox Dolibarr Invoice"
 description: "Schreibt RFID-Ladevorgänge der Alfen Eve Wallbox direkt als Position in die Dolibarr-Spesenabrechnung des jeweiligen Mitarbeiters"
-version: "1.2.9"
+version: "1.3.0"
 slug: "wallbox-dolibarr"
 url: "https://github.com/iron-exx/evcharge-dolibarr-invoice"
+# Vorgebautes Image aus GHCR (von GitHub Actions gebaut, siehe
+# .github/workflows/builder.yaml). HA pullt dieses Image statt lokal zu bauen
+# → umgeht kaputtes Build-DNS auf dem HA-Host. {arch} wird von HA ersetzt,
+# der :version-Tag automatisch angehängt.
+# Voraussetzung: Action ist grün gelaufen UND das GHCR-Paket ist auf "public".
+image: "ghcr.io/iron-exx/{arch}-addon-wallbox-dolibarr"
 init: false
 homeassistant_api: true
 ingress: true
