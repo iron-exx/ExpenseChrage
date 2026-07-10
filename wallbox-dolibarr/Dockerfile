@@ -8,12 +8,12 @@ ARG BUILD_DATE
 ARG BUILD_REF
 
 LABEL \
-  io.hass.name="Wallbox Dolibarr Invoice" \
+  io.hass.name="ExpenseCharge" \
   io.hass.description="Schreibt RFID-Ladevorgänge der Alfen Eve Wallbox direkt als Position in die Dolibarr-Spesenabrechnung des Mitarbeiters" \
   io.hass.type="addon" \
   io.hass.version="${BUILD_VERSION}" \
   io.hass.arch="${BUILD_ARCH}" \
-  org.opencontainers.image.source="https://github.com/iron-exx/evcharge-dolibarr-invoice"
+  org.opencontainers.image.source="https://github.com/iron-exx/ExpenseChrage"
 
 # Alle Abhängigkeiten über apk. 5-fach-Retry gegen transiente Aussetzer.
 #

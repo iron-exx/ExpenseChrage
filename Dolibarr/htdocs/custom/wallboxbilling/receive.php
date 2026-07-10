@@ -1,6 +1,6 @@
 <?php
 /**
- * receive.php — Wallbox Billing Empfangsendpunkt (Token-Auth, kein Login)
+ * receive.php — ExpenseCharge Empfangsendpunkt (Token-Auth, kein Login)
  *
  * POST /custom/wallboxbilling/receive.php
  * Header: X-Wallbox-Token: <WALLBOXBILLING_API_TOKEN>

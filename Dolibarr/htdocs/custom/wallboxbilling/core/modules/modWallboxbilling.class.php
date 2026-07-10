@@ -1,6 +1,6 @@
 <?php
 /**
- * modWallboxbilling.class.php — Wallbox Billing Modul Descriptor v2
+ * modWallboxbilling.class.php — ExpenseCharge Modul Descriptor v2
  *
  * Schlankes Modul: nur RFID-Zuordnungstabelle, kein Cron, kein Export.
  * Session-Daten gehen direkt in llx_expensereport / llx_expensereport_det.

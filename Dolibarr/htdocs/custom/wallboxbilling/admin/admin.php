@@ -1,6 +1,6 @@
 <?php
 /**
- * admin.php — Wallbox Billing Administration v2
+ * admin.php — ExpenseCharge Administration v2
  *
  * 2 Tabs: Konfiguration | RFID-Verwaltung
  * Sessions werden direkt in Spesenabrechnung eingetragen (kein Status-Tab).

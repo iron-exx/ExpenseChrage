@@ -33,6 +33,9 @@ github_token.txt
 # Referenzmaterial (nicht unser Code)
 module_bsp-1.0.zip
 
+# Design-Rohdatei liegt versioniert unter docs/branding/ — Root-Kopie ignorieren
+/cover.png
+
 # HA Addon
 /data/
 *.db

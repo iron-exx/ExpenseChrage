@@ -1,6 +1,6 @@
 <?php
 /**
- * api_wallboxbilling.class.php — Wallbox Billing REST API v2
+ * api_wallboxbilling.class.php — ExpenseCharge REST API v2
  *
  * POST /api/index.php/wallboxbilling/session
  *

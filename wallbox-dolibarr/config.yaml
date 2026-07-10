@@ -1,6 +1,6 @@
 name: "ExpenseCharge"
 description: "ExpenseCharge — Ladevorgänge. Spesen. Abgerechnet."
-version: "1.5.0"
+version: "1.5.1"
 slug: "wallbox-dolibarr"
 init: false
 
@@ -9,12 +9,10 @@ image: "ghcr.io/iron-exx/{arch}-addon-wallbox-dolibarr"
 arch:
   - aarch64
   - amd64
-  - armhf
-  - armv7
-  - i386
 
 ingress: true
 ingress_port: 8099
+homeassistant_api: true
 
 ports:
   8099/tcp: null
@@ -36,6 +34,17 @@ options:
   rfid_whitelist:
     - "EFCD083E"
 
+  # HA-Sensoren der Wallbox (Alfen Eve Vorgabe — bei anderer Wallbox anpassen)
+  sensor_rfid: "sensor.alfen_eve_tag_socket_1"
+  sensor_energy: "sensor.alfen_eve_meter_reading_socket_1"
+  sensor_state: "sensor.alfen_eve_main_state_socket_1"
+
+  # Nur nötig, falls SUPERVISOR_TOKEN nicht verfügbar ist (Normalfall: leer lassen)
+  ha_token: ""
+
+  # Mindest-kWh, ab dem eine Session als echte Ladung gilt (sonst "discarded")
+  min_session_kwh: 0.05
+
   # API-Konfiguration für Dolibarr-Übertragung
   api:
     dolibarr_url: "https://dolibarr.example.com"
@@ -45,9 +54,18 @@ options:
 
 schema:
   log_level: "list(DEBUG|INFO|WARNING|ERROR)"
-  wallboxes: "list"
+  wallboxes:
+    - id: "str"
+      name: "str"
+      enabled: "bool"
+      default: "bool"
   wallbox_id: "str"
   rfid_whitelist: "list(str)"
+  sensor_rfid: "str"
+  sensor_energy: "str"
+  sensor_state: "str"
+  ha_token: "password"
+  min_session_kwh: "float"
   api:
     dolibarr_url: "str"
     api_token: "str"

@@ -40,12 +40,12 @@ Jede Ladung landet sofort als Position im Spesenreport des Mitarbeiters. Pro Mon
 - Web-UI (Ingress): manuelle Sessions, History, CSV-Export
 
 ### Dolibarr-Modul
-- Direkter Insert in `llx_expensereport` / `llx_expensereport_det` als Spesentyp `TK_ELE`
-- **Multi-RFID pro Mitarbeiter**: beliebig viele Karten pro Benutzer
-- Pro-User-Preis (€/kWh) oder Default
-- Duplikat-Schutz via Marker `[wbx:HASH:UNIXTS]` in Comments-Feld
-- **Soft-Delete für RFID-Mapping** (§147 AO, 10 Jahre Aufbewahrungspflicht): deaktivierte Karten bleiben in der Historie nachvollziehbar
-- DOLAPIKEY-Auth, SHA-256-Hash-kompatibel (Dolibarr 20+)
+- Direkter Insert in `llx_expensereport` / `llx_expensereport_det` als Ausgabentyp `TF_OTHER` (Fallback: erste aktive Kategorie)
+- **Multi-RFID pro Mitarbeiter**: beliebig viele Karten pro Benutzer, je mit eigenem Preis/Kostenstelle/Label
+- Pro-Tag-Preis (€/kWh) oder globaler Default
+- Duplikat-Schutz: Abgleich Mitarbeiter + Ladeende-Zeitstempel + Wallbox-ID gegen bereits vorhandene Spesenzeilen
+- RFID-Zuordnung endgültig löschbar (kein Soft-Delete/Reaktivierung)
+- Auth per gemeinsamem API-Token (Header `DOLAPIKEY`), RFID nur als SHA-256-Hash gespeichert (Dolibarr 20+)
 
 ## Voraussetzungen
 
@@ -106,17 +106,17 @@ Zwei Tabs im Ingress:
    - POST an `receive.php` mit `{rfid_hash, wallbox_id, start_time, end_time, kwh}`
    - PHP-Endpoint: RFID→User → Spesenabrechnung suchen/anlegen → Zeile rein
    - Bei Erfolg: `transmitted_at` lokal gesetzt
-   - Bei `RFID_NOT_MAPPED` (422): Admin muss erst Mapping machen, Addon retried automatisch
-   - Bei `RFID_INACTIVE` (422): Karte wurde deaktiviert, Admin muss reaktivieren
+   - Bei `HTTP 404 RFID not registered`: Admin muss die Karte erst zuordnen, Addon retried automatisch
+   - Bei `HTTP 401 Unauthorized`: API-Token in Dolibarr und Addon stimmen nicht überein
 
 ## Sicherheit & Compliance
 
-- ✅ RFID nur als SHA-256-Hash persistiert (Datensparsamkeit, DSGVO)
-- ✅ DOLAPIKEY-Auth (token-basiert, im HA-Secret)
+- ✅ RFID nur als SHA-256-Hash persistiert, Klartext nie gespeichert oder angezeigt (Datensparsamkeit, DSGVO)
+- ✅ Gemeinsames API-Token (Header `DOLAPIKEY`), im HA-Secret bzw. Dolibarr-Konfiguration hinterlegt
 - ✅ SQL-Injection-Schutz via `$db->escape()`
-- ✅ Soft-Delete der RFID-Mappings → Aufbewahrungspflicht §147 AO (10 Jahre)
+- ✅ Schutz gegen versehentliches Kapern eines Tags durch einen anderen Benutzer
 - ✅ Spesenabrechnungen unterliegen Dolibarrs Standard-Audit-Trail
-- ✅ Modul-Deinstallation droppt **keine** aufbewahrungspflichtigen Tabellen
+- ✅ Modul-Deinstallation droppt **keine** Tabellen (`llx_wallbox_rfid` bleibt erhalten)
 
 ## Projektstruktur
 
