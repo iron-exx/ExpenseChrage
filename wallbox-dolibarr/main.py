@@ -68,6 +68,12 @@ _PENDING_AUTH_WINDOW = 600  # 10 Minuten
 # als Fallback verwendet, falls der RFID-Event verpasst wurde.
 _pending_auth = None  # dict: {'rfid_hex': str, 'time': float}
 
+# Zuletzt am RFID-Sensor anliegender Tag-Wert (ohne Zeitfenster). Bei Alfen
+# bleibt der Tag stundenlang als Sensor-Wert "anliegend", ohne neues Event —
+# startet das Laden erst viel später, ist _pending_auth längst abgelaufen.
+# Dieser Cache dient dann als Fallback für den Charging-State-Trigger.
+_latest_rfid = None  # str oder None
+
 # Gecachter Energie-Zählerstand (kWh). Wird laufend aus den state_changed-
 # Events des Energiesensors aktualisiert UND beim Start einmalig geseedet.
 # Start/Ende einer Session lesen NUR diesen Cache — niemals get_state()
@@ -326,7 +332,7 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
       4. Alternativ: RFID wechselt auf "No Tag" → ebenfalls Session beenden
          (Karte abgezogen ohne State-Wechsel, z.B. bei Abbruch).
     """
-    global session_manager, current_config, ha_ws, api_state, _latest_energy
+    global session_manager, current_config, ha_ws, api_state, _latest_energy, _latest_rfid
 
     sensor_rfid   = current_config.get('sensor_rfid',   _DEFAULT_SENSOR_RFID)
     sensor_energy = current_config.get('sensor_energy', _DEFAULT_SENSOR_ENERGY)
@@ -355,9 +361,13 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
 
         # "No Tag" / unknown → Karte entfernt
         if sv_low in _RFID_NONE_VALUES:
+            _latest_rfid = None
             if session_manager.get_active_session():
                 await _end_active_session('rfid_removed')
             return
+
+        # Anliegenden Tag cachen (auch vor Debounce/Whitelist — für Charging-Fallback)
+        _latest_rfid = sv
 
         # Echter Tag erkannt — Debounce + Whitelist
         if not session_manager.debounce_rfid(sv):
@@ -395,6 +405,7 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
                 _LOGGER.debug("Wallbox lädt (state='%s'), Session #%s läuft",
                               state_value, active['id'])
                 return
+            whitelist = current_config.get('rfid_whitelist', [])
             if _pending_auth and (time.time() - _pending_auth['time']) < _PENDING_AUTH_WINDOW:
                 rfid_hex = _pending_auth['rfid_hex']
                 _LOGGER.info("Session-Start nachträglich via charging-state — "
@@ -402,10 +413,17 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
                              time.time() - _pending_auth['time'])
                 await _start_session_for(rfid_hex, f'charging_state={state_value}')
                 _pending_auth = None
+            elif _latest_rfid and _latest_rfid.lower() not in _RFID_NONE_VALUES \
+                    and session_manager.is_rfid_authorized(_latest_rfid, whitelist):
+                # Alfen hält den Tag stundenlang ohne neues Event: kein frisches
+                # Pending-Auth, aber der aktuell anliegende Tag ist gültig →
+                # damit die Session starten.
+                _LOGGER.info("Session-Start via charging-state mit anliegendem Tag "
+                             "(kein frisches Auth-Event, aber Tag gültig).")
+                await _start_session_for(_latest_rfid, f'charging_state_held_tag={state_value}')
             else:
-                _LOGGER.warning("Wallbox lädt (state='%s') aber keine RFID-Auth im "
-                                "Pending-Window. Session wird NICHT erfasst — Karte "
-                                "evtl. vor Addon-Start gehalten?", state_value)
+                _LOGGER.warning("Wallbox lädt (state='%s') aber kein gültiger RFID-Tag "
+                                "anliegend. Session wird NICHT erfasst.", state_value)
             return
 
         _LOGGER.debug("Wallbox-State Zwischenzustand: '%s'", state_value)
@@ -425,7 +443,7 @@ async def check_startup_session():
     """Prüft beim Start ob eine aktive Session existiert UND ob die Wallbox
     aktuell lädt — fängt verlorene Sessions ab wenn das Addon während einer
     laufenden Ladung neugestartet wurde."""
-    global session_manager, api_client, _pending_auth, _latest_energy
+    global session_manager, api_client, _pending_auth, _latest_energy, _latest_rfid
 
     # 1) Alte 'active' Sessions in SQLite als unvollständig markieren
     recovered_sessions = session_manager.recover_active_sessions()
@@ -449,6 +467,10 @@ async def check_startup_session():
     rfid_val   = (snapshot.get(sensor_rfid)  or {}).get('state', '') or ''
     state_val  = (snapshot.get(sensor_state) or {}).get('state', '') or ''
     energy_raw = (snapshot.get(sensor_energy) or {}).get('state')
+
+    # Anliegenden Tag cachen — Fallback für Charging-Start ohne frisches Event
+    if rfid_val and rfid_val.lower() not in _RFID_NONE_VALUES:
+        _latest_rfid = rfid_val
 
     # Energie-Cache seeden — ab jetzt hat Session-Start/-Ende einen gültigen Wert
     seeded = _parse_energy(energy_raw)
