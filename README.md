@@ -83,14 +83,16 @@ Jede Ladung landet sofort als Position im Spesenreport des Mitarbeiters. Pro Mon
 2. Addon „ExpenseCharge" installieren
 3. Konfiguration:
    ```yaml
-   wallbox_id: meine_wallbox
+   wallbox_id: alfen_eve
    rfid_whitelist:
      - "A1B2C3D4"
-   dolibarr_url: "https://erp.example.com"
-   api_token: "<DOLAPIKEY>"
    sensor_rfid:   sensor.alfen_eve_tag_socket_1
    sensor_energy: sensor.alfen_eve_meter_reading_socket_1
    sensor_state:  sensor.alfen_eve_main_state_socket_1
+   api:
+     dolibarr_url: "https://erp.example.com"
+     api_token: "<gemeinsames API-Token, identisch mit Dolibarr-Modulkonfiguration>"
+     transmit_interval: 300
    ```
 
 ### 3. Addon-Web-UI
