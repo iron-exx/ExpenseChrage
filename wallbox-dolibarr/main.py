@@ -507,8 +507,9 @@ async def main():
         'wallbox_state': None,     # 'Charging' / 'Idle' / 'Stopped' / None
         'last_update': None,       # ISO-Timestamp der letzten Sensor-Aktualisierung
     }
-    dolibarr_url = current_config.get("dolibarr_url", "")
-    api_token    = current_config.get("api_token", "")
+    api_config   = current_config.get("api", {})
+    dolibarr_url = api_config.get("dolibarr_url", "")
+    api_token    = api_config.get("api_token", "")
     if dolibarr_url and dolibarr_url != "https://dolibarr.example.com" and api_token:
         try:
             api_client = WallboxApiClient(
@@ -556,7 +557,7 @@ async def main():
             """Periodische API-Übertragung als Hintergrund-Task"""
             import time
             last_transmit = 0
-            transmit_interval = current_config.get("transmit_interval", 300)
+            transmit_interval = current_config.get("api", {}).get("transmit_interval", 300)
 
             while True:
                 if api_client:

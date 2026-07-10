@@ -1,6 +1,6 @@
 <?php
 /**
- * admin.php — ExpenseCharge Administration v2
+ * admin.php — Wallbox Billing Administration v2
  *
  * 2 Tabs: Konfiguration | RFID-Verwaltung
  * Sessions werden direkt in Spesenabrechnung eingetragen (kein Status-Tab).
@@ -421,11 +421,13 @@ if ($tab == 'config') {
                 print ' value="'.$cur_center.'" placeholder="Projekt ABC">';
                 print '</td>';
 
-                // Speichern / Löschen
+                // Aktualisieren / Löschen — bewusst NICHT "Speichern" hier, da die
+                // Zeile bereits gespeichert ist (Badge "zugeordnet"). "Speichern"
+                // würde suggerieren, es sei noch nichts passiert.
                 print '<td><div style="display:flex;gap:6px">';
                 print '<button type="submit" name="saverow_'.$rowid.'" class="wb-btn wb-btn-save">';
                 print '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
-                print ' '.$langs->trans('Save');
+                print ' '.$langs->trans('WallboxUpdateTag');
                 print '</button>';
                 print '<button type="submit" name="delrow_'.$rowid.'" class="wb-btn wb-btn-delete"';
                 print ' onclick="return confirm('.json_encode($langs->trans('WallboxConfirmDeleteRFID')).')">';

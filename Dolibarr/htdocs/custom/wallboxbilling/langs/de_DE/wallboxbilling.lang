@@ -1,4 +1,4 @@
-# ExpenseCharge Sprachdatei (Deutsch) v2
+# Wallbox Billing Sprachdatei (Deutsch) v2
 
 WallboxBillingSetup=ExpenseCharge Konfiguration
 WallboxConfiguration=Konfiguration
@@ -39,3 +39,4 @@ WallboxLabelPlaceholder=z.B. Blaue Ersatzkarte
 WallboxAssignedSince=zugeordnet seit
 WallboxConfirmDeleteRFID=RFID-Zuordnung wirklich löschen?
 WallboxAddTag=Tag hinzufügen
+WallboxUpdateTag=Aktualisieren

@@ -746,8 +746,9 @@ def create_app(session_manager, config, api_state):
 
         if not client:
             from api_client import WallboxApiClient
-            url   = config.get('dolibarr_url', '')
-            token = config.get('api_token', '')
+            api_cfg = config.get('api', {})
+            url     = api_cfg.get('dolibarr_url', '')
+            token   = api_cfg.get('api_token', '')
             if url and token and url != 'https://dolibarr.example.com':
                 try:
                     c = WallboxApiClient(base_url=url, api_token=token, timeout=30)
