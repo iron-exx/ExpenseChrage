@@ -1,6 +1,6 @@
 name: "ExpenseCharge"
 description: "ExpenseCharge — Ladevorgänge. Spesen. Abgerechnet."
-version: "1.6.0"
+version: "1.6.1"
 slug: "wallbox-dolibarr"
 init: false
 
@@ -60,7 +60,8 @@ schema:
       enabled: "bool"
       default: "bool"
   wallbox_id: "str"
-  rfid_whitelist: "list(str)"
+  rfid_whitelist:
+    - "str"
   sensor_rfid: "str"
   sensor_energy: "str"
   sensor_state: "str"
