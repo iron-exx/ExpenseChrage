@@ -1,10 +1,10 @@
 name: "ExpenseCharge"
 description: "ExpenseCharge — Ladevorgänge. Spesen. Abgerechnet."
-version: "1.5.1"
+version: "1.5.2"
 slug: "wallbox-dolibarr"
 init: false
 
-image: "ghcr.io/iron-exx/{arch}-addon-wallbox-dolibarr"
+image: "ghcr.io/iron-exx/{arch}-addon-expensecharge"
 
 arch:
   - aarch64

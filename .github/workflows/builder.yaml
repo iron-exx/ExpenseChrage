@@ -67,5 +67,5 @@ jobs:
             BUILD_VERSION=${{ steps.ver.outputs.version }}
             BUILD_ARCH=${{ matrix.arch }}
           tags: |
-            ghcr.io/iron-exx/${{ matrix.arch }}-addon-wallbox-dolibarr:${{ steps.ver.outputs.version }}
-            ghcr.io/iron-exx/${{ matrix.arch }}-addon-wallbox-dolibarr:latest
+            ghcr.io/iron-exx/${{ matrix.arch }}-addon-expensecharge:${{ steps.ver.outputs.version }}
+            ghcr.io/iron-exx/${{ matrix.arch }}-addon-expensecharge:latest
