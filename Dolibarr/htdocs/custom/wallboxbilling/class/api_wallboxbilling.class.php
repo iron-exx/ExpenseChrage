@@ -129,12 +129,12 @@ class WallboxbillingApi extends DolibarrApi
         }
 
         // WR-06: Report-Summen aktualisieren — Fehler nicht stillschweigend ignorieren
-        $now = $this->db->idate(dol_now());
+        // date_modif NICHT setzen — Spalte existiert nicht in allen Dolibarr-Versionen;
+        // tms wird per ON UPDATE CURRENT_TIMESTAMP automatisch gepflegt
         $res_upd = $this->db->query(
             "UPDATE ".MAIN_DB_PREFIX."expensereport"
            ." SET total_ht  = total_ht  + ".(float)$total_ht.","
-           ."     total_ttc = total_ttc + ".(float)$total_ht.","  // tva_tx=0, daher ttc=ht
-           ."     date_modif = '".$now."'"
+           ."     total_ttc = total_ttc + ".(float)$total_ht  // tva_tx=0, daher ttc=ht
            ." WHERE rowid=".(int)$report_id
         );
         if (!$res_upd) {

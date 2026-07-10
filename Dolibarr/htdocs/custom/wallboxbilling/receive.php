@@ -235,18 +235,20 @@ if ($line_id <= 0) {
     wb_json_exit(500, array('success' => false, 'error' => 'Internal error: could not retrieve inserted line ID'));
 }
 
-$now = $db->idate(dol_now());
+// date_modif NICHT setzen — Spalte existiert nicht in allen Dolibarr-Versionen;
+// die tms-Spalte wird ohnehin per ON UPDATE CURRENT_TIMESTAMP automatisch gepflegt
 $res_upd = $db->query(
     "UPDATE ".MAIN_DB_PREFIX."expensereport"
    ." SET total_ht  = total_ht  + ".(float) $total_ht.","
-   ."     total_ttc = total_ttc + ".(float) $total_ht.","
-   ."     date_modif = '".$now."'"
+   ."     total_ttc = total_ttc + ".(float) $total_ht
    ." WHERE rowid=".(int) $report_id
 );
 if (!$res_upd) {
     $db->rollback();
-    dol_syslog('WallboxBilling receive.php: expensereport SUM UPDATE failed: '.$db->lasterror(), LOG_ERR);
-    wb_json_exit(500, array('success' => false, 'error' => 'Internal error updating expense report totals'));
+    $db_err = $db->lasterror();
+    dol_syslog('WallboxBilling receive.php: expensereport SUM UPDATE failed: '.$db_err, LOG_ERR);
+    // TODO: DB-Fehlertext nach Diagnose wieder entfernen (nur intern, addon<->dolibarr)
+    wb_json_exit(500, array('success' => false, 'error' => 'Internal error updating expense report totals: '.$db_err));
 }
 
 $db->commit();
