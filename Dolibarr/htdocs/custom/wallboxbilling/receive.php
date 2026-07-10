@@ -1,6 +1,6 @@
 <?php
 /**
- * receive.php — ExpenseCharge Empfangsendpunkt (Token-Auth, kein Login)
+ * receive.php — Wallbox Billing Empfangsendpunkt (Token-Auth, kein Login)
  *
  * POST /custom/wallboxbilling/receive.php
  * Header: X-Wallbox-Token: <WALLBOXBILLING_API_TOKEN>
@@ -91,13 +91,22 @@ if (!is_array($data)) {
     wb_json_exit(400, array('success' => false, 'error' => 'Invalid JSON body'));
 }
 
-foreach (array('rfid_hash', 'wallbox_id', 'start_time', 'end_time', 'kwh') as $field) {
+foreach (array('wallbox_id', 'start_time', 'end_time', 'kwh') as $field) {
     if (!isset($data[$field]) || $data[$field] === '') {
         wb_json_exit(400, array('success' => false, 'error' => "Missing field: $field"));
     }
 }
 
-$rfid_hash  = (string) $data['rfid_hash'];
+// Entweder rfid_hash (physischer Tap) ODER login (manuelle Admin-Erfassung) nötig
+$has_hash  = !empty($data['rfid_hash']);
+$has_login = !empty($data['login']);
+if (!$has_hash && !$has_login) {
+    wb_json_exit(400, array('success' => false, 'error' => 'Missing field: rfid_hash or login'));
+}
+if ($has_hash && $has_login) {
+    wb_json_exit(400, array('success' => false, 'error' => 'Provide either rfid_hash or login, not both'));
+}
+
 $wallbox_id = (string) $data['wallbox_id'];
 $kwh        = (float) $data['kwh'];
 
@@ -108,9 +117,6 @@ try {
     wb_json_exit(400, array('success' => false, 'error' => 'Invalid start_time or end_time (ISO 8601 required)'));
 }
 
-if (!preg_match('/^[a-f0-9]{64}$/i', $rfid_hash)) {
-    wb_json_exit(400, array('success' => false, 'error' => 'Invalid rfid_hash (64-char hex SHA-256 required)'));
-}
 if (!preg_match('/^[\w\-\.]{1,50}$/', $wallbox_id)) {
     wb_json_exit(400, array('success' => false, 'error' => 'wallbox_id invalid (alphanumeric, hyphen, dot; max 50 chars)'));
 }
@@ -121,20 +127,54 @@ if ($kwh <= 0 || !is_finite($kwh)) {
     wb_json_exit(400, array('success' => false, 'error' => 'kwh must be greater than 0'));
 }
 
-// Benutzer + Preis aus RFID-Zuordnung ermitteln (SEC-01: Hash nicht loggen/ausgeben)
-$res_rfid = $db->query(
-    "SELECT fk_user, price_kwh FROM ".MAIN_DB_PREFIX."wallbox_rfid"
-   ." WHERE rfid_hash='".$db->escape($rfid_hash)."' LIMIT 1"
-);
-if (!$res_rfid || $db->num_rows($res_rfid) == 0) {
-    wb_json_exit(404, array('success' => false, 'error' => 'RFID not registered in Dolibarr'));
-}
-$row     = $db->fetch_object($res_rfid);
-$fk_user = (int) $row->fk_user;
+if ($has_hash) {
+    // Physischer Tap: Benutzer + Preis aus RFID-Zuordnung (SEC-01: Hash nicht loggen/ausgeben)
+    $rfid_hash = (string) $data['rfid_hash'];
+    if (!preg_match('/^[a-f0-9]{64}$/i', $rfid_hash)) {
+        wb_json_exit(400, array('success' => false, 'error' => 'Invalid rfid_hash (64-char hex SHA-256 required)'));
+    }
 
-$price_kwh = ($row->price_kwh !== null)
-    ? (float) $row->price_kwh
-    : (float) getDolGlobalString('WALLBOXBILLING_DEFAULT_PRICE', 0.30);
+    $res_rfid = $db->query(
+        "SELECT fk_user, price_kwh FROM ".MAIN_DB_PREFIX."wallbox_rfid"
+       ." WHERE rfid_hash='".$db->escape($rfid_hash)."' LIMIT 1"
+    );
+    if (!$res_rfid || $db->num_rows($res_rfid) == 0) {
+        wb_json_exit(404, array('success' => false, 'error' => 'RFID not registered in Dolibarr'));
+    }
+    $row     = $db->fetch_object($res_rfid);
+    $fk_user = (int) $row->fk_user;
+
+    $price_kwh = ($row->price_kwh !== null)
+        ? (float) $row->price_kwh
+        : (float) getDolGlobalString('WALLBOXBILLING_DEFAULT_PRICE', 0.30);
+} else {
+    // Manuelle Admin-Erfassung: Benutzer direkt per Login identifizieren
+    // (vertrauenswürdig, da bereits per Shared-Token authentifiziert)
+    $login = (string) $data['login'];
+    if (!preg_match('/^[\w\.\-@]{1,255}$/', $login)) {
+        wb_json_exit(400, array('success' => false, 'error' => 'Invalid login'));
+    }
+
+    $res_user = $db->query(
+        "SELECT rowid FROM ".MAIN_DB_PREFIX."user"
+       ." WHERE login='".$db->escape($login)."' AND statut=1 LIMIT 1"
+    );
+    if (!$res_user || $db->num_rows($res_user) == 0) {
+        wb_json_exit(404, array('success' => false, 'error' => 'User not found or inactive'));
+    }
+    $fk_user = (int) $db->fetch_object($res_user)->rowid;
+
+    // Preis aus dem (ersten) zugeordneten Tag des Users übernehmen, sonst Default
+    $res_price = $db->query(
+        "SELECT price_kwh FROM ".MAIN_DB_PREFIX."wallbox_rfid"
+       ." WHERE fk_user=".(int) $fk_user." ORDER BY date_creation LIMIT 1"
+    );
+    $price_row = ($res_price && $db->num_rows($res_price) > 0) ? $db->fetch_object($res_price) : null;
+    $price_kwh = ($price_row && $price_row->price_kwh !== null)
+        ? (float) $price_row->price_kwh
+        : (float) getDolGlobalString('WALLBOXBILLING_DEFAULT_PRICE', 0.30);
+}
+
 $total_ht = round($kwh * $price_kwh, 2);
 
 // Idempotenz: identische Session (User + Start + Ende) nicht doppelt anlegen

@@ -1,6 +1,6 @@
 <?php
 /**
- * modWallboxbilling.class.php — ExpenseCharge Modul Descriptor v2
+ * modWallboxbilling.class.php — Wallbox Billing Modul Descriptor v2
  *
  * Schlankes Modul: nur RFID-Zuordnungstabelle, kein Cron, kein Export.
  * Session-Daten gehen direkt in llx_expensereport / llx_expensereport_det.
@@ -26,7 +26,7 @@ class modWallboxbilling extends DolibarrModules
 
         $this->description = 'ExpenseCharge — Ladevorgänge. Spesen. Abgerechnet.';
 
-        $this->version    = '2.2.0';
+        $this->version    = '2.3.0';
         $this->const_name = 'MAIN_MODULE_'.strtoupper($this->name);
         $this->special    = 0;
         $this->picto      = 'fa-charging-station';

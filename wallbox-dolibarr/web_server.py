@@ -369,8 +369,7 @@ def _db_stats_month(db_path):
 # Seiten-Builder
 # ---------------------------------------------------------------------------
 
-def _build_form_page(session_manager, config, message_html='', base_href=''):
-    whitelist = config.get('rfid_whitelist', [])
+def _build_form_page(session_manager, config, message_html='', base_href='', api_state=None):
     today     = datetime.now().date().isoformat()
     now       = datetime.now()
 
@@ -401,10 +400,23 @@ def _build_form_page(session_manager, config, message_html='', base_href=''):
   </div>
 </div>"""
 
-    # RFID-Optionen
-    rfid_opts = '\n'.join(
-        f'<option value="{r}">{r}</option>' for r in whitelist
-    ) or '<option value="">— keine RFID konfiguriert —</option>'
+    # Mitarbeiter-Optionen — aus Dolibarr geladen (Name statt rohem RFID-Code).
+    # SEC-01: employees.php liefert nie den rfid_hash, nur login + Name.
+    employees = []
+    client = api_state.get('client') if api_state else None
+    if client:
+        try:
+            employees = client.list_employees()
+        except Exception:
+            employees = []
+
+    if employees:
+        rfid_opts = '\n'.join(
+            f'<option value="{e["login"]}">{e["name"] or e["login"]}</option>'
+            for e in employees
+        )
+    else:
+        rfid_opts = '<option value="">— keine Mitarbeiter mit RFID-Tag in Dolibarr gefunden —</option>'
 
     # Letzte 5 Sessions
     rows_html = ''
@@ -554,8 +566,8 @@ def _build_form_page(session_manager, config, message_html='', base_href=''):
 <div class="card">
   <div class="card-title">{_ICO_BOLT} Manueller Ladevorgang</div>
   <form method="POST" action="./">
-    <label class="flabel">RFID-Karte</label>
-    <select name="rfid" required>{rfid_opts}</select>
+    <label class="flabel">Mitarbeiter</label>
+    <select name="employee_login" required>{rfid_opts}</select>
     <label class="flabel">Geladene Energie</label>
     <div class="kwh-wrap">
       <input type="number" name="kwh" min="0.001" step="0.001"
@@ -681,7 +693,6 @@ def create_app(session_manager, config, api_state):
     api_state: dict mit key 'client' → WallboxApiClient oder None.
     Wird von main.py befüllt und kann sich zur Laufzeit ändern.
     """
-    from utils.hash import hash_rfid
 
     # -- GET / ---------------------------------------------------------------
     async def handle_get(request):
@@ -690,7 +701,7 @@ def create_app(session_manager, config, api_state):
         t   = request.rel_url.query.get('t', '')
         msg_html = f'<div class="msg {t}">{msg}</div>' if msg else ''
         return web.Response(
-            text=_build_form_page(session_manager, config, msg_html, base_href=base_href),
+            text=_build_form_page(session_manager, config, msg_html, base_href=base_href, api_state=api_state),
             content_type='text/html'
         )
 
@@ -699,20 +710,21 @@ def create_app(session_manager, config, api_state):
         base_href = request.headers.get('X-Ingress-Path', '').rstrip('/')
         msg_html = ''
         try:
-            data     = await request.post()
-            rfid_hex = data.get('rfid', '').strip()
-            kwh_str  = data.get('kwh', '').strip()
-            date_str = data.get('date', datetime.now().date().isoformat()).strip()
+            data           = await request.post()
+            employee_login = data.get('employee_login', '').strip()
+            kwh_str        = data.get('kwh', '').strip()
+            date_str       = data.get('date', datetime.now().date().isoformat()).strip()
 
-            if not rfid_hex:
-                raise ValueError("Keine RFID ausgewählt.")
+            if not employee_login:
+                raise ValueError("Kein Mitarbeiter ausgewählt.")
             kwh = float(kwh_str) if kwh_str else 0.0
             if kwh <= 0:
                 raise ValueError("kWh muss größer als 0 sein.")
 
-            rfid_hash  = hash_rfid(rfid_hex)
             wallbox_id = config.get('wallbox_id', 'wallbox')
-            sid        = session_manager.add_manual_session(rfid_hash, kwh, wallbox_id, date_str)
+            sid        = session_manager.add_manual_session(
+                kwh, wallbox_id, date_str, login=employee_login
+            )
 
             if sid:
                 msg_html = (f'<div class="msg ok">Session #{sid} gespeichert: '
@@ -723,7 +735,7 @@ def create_app(session_manager, config, api_state):
             msg_html = f'<div class="msg err">Fehler: {exc}</div>'
 
         return web.Response(
-            text=_build_form_page(session_manager, config, msg_html, base_href=base_href),
+            text=_build_form_page(session_manager, config, msg_html, base_href=base_href, api_state=api_state),
             content_type='text/html'
         )
 
@@ -764,7 +776,7 @@ def create_app(session_manager, config, api_state):
                 msg_html = f'<div class="msg err">Übertragungsfehler: {exc}</div>'
 
         return web.Response(
-            text=_build_form_page(session_manager, config, msg_html, base_href=base_href),
+            text=_build_form_page(session_manager, config, msg_html, base_href=base_href, api_state=api_state),
             content_type='text/html'
         )
 

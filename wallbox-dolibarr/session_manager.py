@@ -85,6 +85,7 @@ class SessionManager:
         for col_ddl, col_name in [
             ('ALTER TABLE sessions ADD COLUMN transmitted_at TEXT', 'transmitted_at'),
             ('ALTER TABLE sessions ADD COLUMN start_energy_valid INTEGER NOT NULL DEFAULT 1', 'start_energy_valid'),
+            ('ALTER TABLE sessions ADD COLUMN login TEXT', 'login'),
         ]:
             try:
                 cursor.execute(col_ddl)
@@ -414,20 +415,27 @@ class SessionManager:
 
         return [dict(row) for row in rows]
 
-    def add_manual_session(self, rfid_hash: str, kwh: float, wallbox_id: str,
-                           session_date: str) -> Optional[int]:
+    def add_manual_session(self, kwh: float, wallbox_id: str,
+                           session_date: str, rfid_hash: Optional[str] = None,
+                           login: Optional[str] = None) -> Optional[int]:
         """
         Legt eine manuelle Session direkt als 'completed' an (für UI-Eingaben).
 
         Args:
-            rfid_hash:    SHA-256 Hash der RFID-Karte
             kwh:          Verbrauchte Energie in kWh
             wallbox_id:   Wallbox-ID aus der Konfiguration
             session_date: Datum als ISO-String (YYYY-MM-DD)
+            rfid_hash:    SHA-256 Hash der RFID-Karte (physischer Tap-Ersatz)
+            login:        Dolibarr-Login des Mitarbeiters (Auswahl per Name) —
+                          genau eins von rfid_hash/login muss gesetzt sein
 
         Returns:
             Session-ID oder None bei Fehler
         """
+        if not login and not rfid_hash:
+            self._logger.error("add_manual_session: weder rfid_hash noch login angegeben")
+            return None
+
         try:
             date_obj = datetime.fromisoformat(session_date)
         except (ValueError, TypeError):
@@ -435,7 +443,7 @@ class SessionManager:
 
         # Aktuelle Uhrzeit verwenden — verhindert Duplikat-Kollisionen bei
         # mehreren manuellen Sessions am selben Tag (Dolibarr lehnt sonst
-        # mit "Session already exists" ab, da rfid_hash+start+end identisch)
+        # mit "Session already exists" ab, da Identität+start+end identisch)
         now_dt   = datetime.now().replace(microsecond=0)
         start_dt = date_obj.replace(
             hour=now_dt.hour,
@@ -448,14 +456,19 @@ class SessionManager:
         end_time   = end_dt.isoformat()
         now        = now_dt.isoformat()
 
+        # rfid_hash-Spalte ist NOT NULL — bei Login-Auswahl einen klar erkennbaren
+        # Platzhalter speichern, der NIE als echter Kartenwert an Dolibarr geht
+        # (transmit_completed_sessions bevorzugt login, wenn gesetzt)
+        stored_hash = rfid_hash or hash_rfid(f"__manual_login__:{login}")
+
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute('''
             INSERT INTO sessions
-                (rfid_hash, wallbox_id, start_time, end_time,
+                (rfid_hash, login, wallbox_id, start_time, end_time,
                  start_energy_kwh, end_energy_kwh, total_kwh, status, created_at)
-            VALUES (?, ?, ?, ?, 0.0, ?, ?, 'completed', ?)
-        ''', (rfid_hash, wallbox_id, start_time, end_time, kwh, kwh, now))
+            VALUES (?, ?, ?, ?, ?, 0.0, ?, ?, 'completed', ?)
+        ''', (stored_hash, login, wallbox_id, start_time, end_time, kwh, kwh, now))
 
         session_id = cursor.lastrowid
         conn.commit()
@@ -480,7 +493,7 @@ class SessionManager:
 
         # Sessions finden: abgeschlossen (NICHT discarded/incomplete) und noch nicht übertragen
         cursor.execute('''
-            SELECT id, rfid_hash, wallbox_id, start_time, end_time, total_kwh
+            SELECT id, rfid_hash, wallbox_id, start_time, end_time, total_kwh, login
             FROM sessions
             WHERE status = 'completed'
               AND end_time IS NOT NULL
@@ -497,13 +510,17 @@ class SessionManager:
 
         for row in rows:
             session_id = row[0]
+            login = row[6] if len(row) > 6 else None
             session_data = {
-                "rfid_hash": row[1],
                 "wallbox_id": row[2],
                 "start_time": format_iso8601(row[3]),
                 "end_time": format_iso8601(row[4]),
                 "kwh": row[5] if row[5] else 0.0
             }
+            if login:
+                session_data["login"] = login
+            else:
+                session_data["rfid_hash"] = row[1]
 
             # Session an Dolibarr übertragen
             success, error = api_client.transmit_session(session_data)

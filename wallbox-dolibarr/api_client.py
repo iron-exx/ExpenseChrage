@@ -96,17 +96,22 @@ class WallboxApiClient:
         url = f"{self.base_url}/custom/wallboxbilling/receive.php"
 
         # JSON-Payload gemäß D-04 (API-01)
+        # Entweder rfid_hash (physischer Tap) oder login (manuelle Admin-Erfassung
+        # per Mitarbeiter-Auswahl) — nie beides gleichzeitig
         payload = {
-            "rfid_hash": session_data["rfid_hash"],      # Immer Hash (API-05, SEC-03)
             "wallbox_id": session_data["wallbox_id"],
             "start_time": format_timestamp(session_data["start_time"]),  # ISO 8601
             "end_time": format_timestamp(session_data["end_time"]),      # ISO 8601
             "kwh": round(float(session_data["kwh"]), 3)                # 3 Nachkommastellen
         }
+        if session_data.get("login"):
+            payload["login"] = session_data["login"]
+        else:
+            payload["rfid_hash"] = session_data["rfid_hash"]      # Immer Hash (API-05, SEC-03)
 
+        identity_log = f"login={payload['login']}" if "login" in payload else f"rfid_hash={payload['rfid_hash'][:16]}..."
         try:
-            _LOGGER.debug("Sende Session an %s: rfid_hash=%s...",
-                         url, payload["rfid_hash"][:16])
+            _LOGGER.debug("Sende Session an %s: %s", url, identity_log)
 
             response = self.session.post(
                 url,
@@ -143,17 +148,16 @@ class WallboxApiClient:
                 if msg == 'Session already exists':
                     # Idempotent: schon übertragen → als Erfolg markieren, aber loggen
                     _LOGGER.warning(
-                        "Session bereits in Dolibarr (rfid_hash+start+end identisch) — "
-                        "als übertragen markiert. rfid_hash=%s...",
-                        payload['rfid_hash'][:16]
+                        "Session bereits in Dolibarr (identisch) — als übertragen markiert. %s",
+                        identity_log
                     )
                 else:
                     error_msg = body.get('error', msg or 'API returned success=false')
                     _LOGGER.error("API abgelehnt: %s", error_msg)
                     return (False, error_msg)
 
-            _LOGGER.info("Session erfolgreich übertragen: rfid_hash=%s..., kwh=%.3f",
-                        payload["rfid_hash"][:16], payload["kwh"])
+            _LOGGER.info("Session erfolgreich übertragen: %s, kwh=%.3f",
+                        identity_log, payload["kwh"])
             return (True, "")
 
         except requests.exceptions.Timeout:
@@ -195,4 +199,30 @@ class WallboxApiClient:
         except Exception as e:
             _LOGGER.warning("Dolibarr nicht erreichbar: %s", e)
             return False
+
+    def list_employees(self) -> list:
+        """
+        Holt die Liste der Mitarbeiter mit zugeordnetem RFID-Tag aus Dolibarr
+        (für die Auswahl beim manuellen Erfassen — SEC-01: enthält nie den
+        rfid_hash, nur login + Name).
+
+        Returns:
+            Liste von {"login": ..., "name": ...} — leer bei Fehler
+        """
+        url = f"{self.base_url}/custom/wallboxbilling/employees.php"
+        try:
+            response = self.session.get(
+                url,
+                headers={"DOLAPIKEY": self.api_token},
+                timeout=self.timeout
+            )
+            response.raise_for_status()
+            body = response.json()
+            if body.get("success"):
+                return body.get("employees", [])
+            _LOGGER.warning("employees.php lieferte success=false: %s", body.get("error"))
+            return []
+        except Exception as e:
+            _LOGGER.warning("Mitarbeiterliste konnte nicht geladen werden: %s", e)
+            return []
 
