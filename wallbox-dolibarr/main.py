@@ -328,9 +328,11 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
       2. State-Sensor wechselt zu "Charging Power On" → Energie fließt,
          Live-Zustand wird aktualisiert.
       3. State-Sensor wechselt zu "Available" / "Finishing" / "Stopped"
-         → Session beenden (Energie-Delta = end − start).
-      4. Alternativ: RFID wechselt auf "No Tag" → ebenfalls Session beenden
-         (Karte abgezogen ohne State-Wechsel, z.B. bei Abbruch).
+         → Session beenden (Energie-Delta = end − start). Dies ist der
+         EINZIGE Weg, eine Session zu beenden.
+      Hinweis: "No Tag" beendet KEINE Session mehr — der Tag fällt bei der
+      angepassten Alfen-Integration nach ~2 s automatisch auf "No Tag" zurück
+      und ist damit der Ruhezustand, kein Abbruch-Signal.
     """
     global session_manager, current_config, ha_ws, api_state, _latest_energy, _latest_rfid
 
@@ -359,11 +361,13 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
         sv = (state_value or '').strip()
         sv_low = sv.lower()
 
-        # "No Tag" / unknown → Karte entfernt
+        # "No Tag" / unknown: Bei Auto-Reset-Wallboxen (Alfen-Integration setzt
+        # den Tag nach ~2 s selbst auf "No Tag" zurück) ist das der NORMALE
+        # Ruhezustand — KEIN "Karte abgezogen". Session-Ende läuft daher
+        # ausschließlich über den Wallbox-Status (Available/Finishing/…), nicht
+        # über "No Tag". _latest_rfid bleibt bewusst erhalten, damit ein etwas
+        # später startender Ladevorgang noch dem letzten Tag zugeordnet wird.
         if sv_low in _RFID_NONE_VALUES:
-            _latest_rfid = None
-            if session_manager.get_active_session():
-                await _end_active_session('rfid_removed')
             return
 
         # Anliegenden Tag cachen (auch vor Debounce/Whitelist — für Charging-Fallback)
