@@ -4,11 +4,22 @@ Ladevorgänge. Spesen. Abgerechnet.
 
 RFID-basierte Abrechnung von Wallbox-Ladevorgängen — Sessions werden vom Home-Assistant-Addon **direkt in die Dolibarr-Spesenabrechnung** des jeweiligen Mitarbeiters geschrieben.
 
+
+
 ![Dolibarr-Modul](https://img.shields.io/badge/Dolibarr--Modul-2.2.0-blue)
 ![HA-Addon](https://img.shields.io/badge/HA--Addon-1.5.0-blue)
 ![Dolibarr](https://img.shields.io/badge/Dolibarr-20.x--22.x-green)
 ![Python](https://img.shields.io/badge/Python-3.12+-green)
 ![License](https://img.shields.io/badge/License-Proprietary-red)
+
+
+
+
+<img width="1254" height="1254" alt="cover" src="https://github.com/user-attachments/assets/da61923e-c9f7-47de-9d21-eebe6b6c36a9" />
+
+
+
+
 
 ## Funktionsweise
 
