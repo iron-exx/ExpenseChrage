@@ -214,11 +214,11 @@ $date_sql = $db->idate($end_ts);
 $resql = $db->query(
     "INSERT INTO ".MAIN_DB_PREFIX."expensereport_det"
    ." (fk_expensereport, date, fk_c_type_fees, rang, comments,"
-   ."  qty, value_unit, total_ht, tva_tx, total_tva, total_ttc, rule_warning_validated)"
+   ."  qty, value_unit, total_ht, tva_tx, total_tva, total_ttc)"
    ." VALUES ("
    .(int) $report_id.", '".$date_sql."', ".(int) $fk_type.", ".(int) $rang.", '".$comment."',"
    .(float) $kwh.", ".(float) $price_kwh.", ".(float) $total_ht.","
-   ." 0, 0, ".(float) $total_ht.", 0)"
+   ." 0, 0, ".(float) $total_ht.")"
 );
 if (!$resql) {
     $db->rollback();
