@@ -26,6 +26,13 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
+# Secrets — NIE committen
+github_token.txt
+*.token
+
+# Referenzmaterial (nicht unser Code)
+module_bsp-1.0.zip
+
 # HA Addon
 /data/
 *.db

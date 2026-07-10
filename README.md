@@ -1,11 +1,14 @@
-# Wallbox-Dolibarr Integration
+# ExpenseCharge
+
+Ladevorgänge. Spesen. Abgerechnet.
 
 RFID-basierte Abrechnung von Wallbox-Ladevorgängen — Sessions werden vom Home-Assistant-Addon **direkt in die Dolibarr-Spesenabrechnung** des jeweiligen Mitarbeiters geschrieben.
 
-![Dolibarr-Modul](https://img.shields.io/badge/Dolibarr--Modul-1.1.4-blue)
-![HA-Addon](https://img.shields.io/badge/HA--Addon-1.3.0-blue)
+![Dolibarr-Modul](https://img.shields.io/badge/Dolibarr--Modul-2.2.0-blue)
+![HA-Addon](https://img.shields.io/badge/HA--Addon-1.5.0-blue)
 ![Dolibarr](https://img.shields.io/badge/Dolibarr-20.x--22.x-green)
 ![Python](https://img.shields.io/badge/Python-3.12+-green)
+![License](https://img.shields.io/badge/License-Proprietary-red)
 
 ## Funktionsweise
 
@@ -56,18 +59,17 @@ Jede Ladung landet sofort als Position im Spesenreport des Mitarbeiters. Pro Mon
 
 ### 1. Dolibarr-Modul
 
-1. `module_wallboxbilling-1.1.4.zip` im Dolibarr-Modulmanager hochladen
+1. Aktuelle `module_wallboxbilling-*.zip` im Dolibarr-Modulmanager hochladen
 2. Modul **aktivieren**
-3. Unter „Wallbox-Abrechnung Konfiguration":
+3. Unter „ExpenseCharge Konfiguration":
    - Default-Preis pro kWh setzen
-   - RFID-Karten pro Mitarbeiter zuordnen
-
-Verify: `https://<dolibarr>/custom/wallboxbilling/receive.php` → muss `{"version":"1.1.4","mode":"direct-to-expensereport"}` zeigen.
+   - API-Token (Shared Secret) setzen — muss identisch im HA-Addon (`api_token`) stehen
+   - RFID-Karten pro Mitarbeiter zuordnen (RFID-Verwaltung-Tab)
 
 ### 2. Home Assistant Addon
 
-1. Repository hinzufügen: `https://github.com/iron-exx/evcharge-dolibarr-invoice`
-2. Addon „Wallbox Dolibarr Invoice" installieren
+1. Repository hinzufügen: `https://github.com/iron-exx/ExpenseChrage`
+2. Addon „ExpenseCharge" installieren
 3. Konfiguration:
    ```yaml
    wallbox_id: meine_wallbox
@@ -119,28 +121,30 @@ Zwei Tabs im Ingress:
 ## Projektstruktur
 
 ```
-Wallbox-Dolibarr/
+ExpenseCharge/
 ├── Dolibarr/htdocs/custom/wallboxbilling/   # Dolibarr-Modul
-│   ├── receive.php                          # POST-Endpoint
-│   ├── admin/setup.php                      # Konfiguration + RFID-Verwaltung
+│   ├── receive.php                          # POST-Endpoint (Token-Auth)
+│   ├── index.php                            # Sessions-Übersicht (Skeleton)
+│   ├── admin/admin.php                      # Konfiguration + RFID-Verwaltung
+│   ├── class/api_wallboxbilling.class.php   # REST-API (Dolibarr Web-Services)
 │   ├── core/modules/modWallboxbilling.class.php
-│   ├── lib/wallboxbilling.lib.php
-│   └── langs/                               # de_DE, en_US
+│   └── langs/de_DE/wallboxbilling.lang
 ├── wallbox-dolibarr/                        # HA-Addon
 │   ├── main.py                              # Hauptloop + Websocket
 │   ├── session_manager.py                   # SQLite + RFID
 │   ├── api_client.py                        # Dolibarr POST
 │   ├── web_server.py                        # Ingress UI
 │   ├── utils/hash.py                        # SHA-256
+│   ├── icon.png / logo.png                  # Addon-Branding
 │   ├── Dockerfile
 │   └── config.yaml
-└── module_wallboxbilling-1.1.4.zip          # aktuelles Dolibarr-Modul
+└── module_wallboxbilling-*.zip              # Build-Artefakte der Dolibarr-Module
 ```
 
 ## Lizenz
 
-MIT — siehe `LICENSE`.
+Proprietär — alle Rechte vorbehalten. Siehe `LICENSE`.
 
 ## Support
 
-GitHub: [iron-exx/evcharge-dolibarr-invoice](https://github.com/iron-exx/evcharge-dolibarr-invoice)
+GitHub: [iron-exx/ExpenseChrage](https://github.com/iron-exx/ExpenseChrage)

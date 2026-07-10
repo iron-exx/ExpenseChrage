@@ -1,47 +1,61 @@
-name: "Wallbox Dolibarr Invoice"
-description: "Schreibt RFID-Ladevorgänge der Alfen Eve Wallbox direkt als Position in die Dolibarr-Spesenabrechnung des jeweiligen Mitarbeiters"
-version: "1.3.0"
+name: "ExpenseCharge"
+description: "ExpenseCharge — Ladevorgänge. Spesen. Abgerechnet."
+version: "1.5.0"
 slug: "wallbox-dolibarr"
-url: "https://github.com/iron-exx/evcharge-dolibarr-invoice"
-# Vorgebautes Image aus GHCR (von GitHub Actions gebaut, siehe
-# .github/workflows/builder.yaml). HA pullt dieses Image statt lokal zu bauen
-# → umgeht kaputtes Build-DNS auf dem HA-Host. {arch} wird von HA ersetzt,
-# der :version-Tag automatisch angehängt.
-# Voraussetzung: Action ist grün gelaufen UND das GHCR-Paket ist auf "public".
-image: "ghcr.io/iron-exx/{arch}-addon-wallbox-dolibarr"
 init: false
-homeassistant_api: true
-ingress: true
-ingress_port: 8099
+
+image: "ghcr.io/iron-exx/{arch}-addon-wallbox-dolibarr"
 
 arch:
   - aarch64
   - amd64
+  - armhf
+  - armv7
+  - i386
+
+ingress: true
+ingress_port: 8099
+
+ports:
+  8099/tcp: null
 
 options:
   log_level: "INFO"
-  wallbox_id: "meine_wallbox"
+
+  # Multi-Wallbox Konfiguration
+  wallboxes:
+    - id: "alfen_eve"
+      name: "Alfen Eve (Hauptwandbox)"
+      enabled: true
+      default: true
+
+  # Fallback für Abwärtskompatibilität
+  wallbox_id: "alfen_eve"
+
+  # RFID Whitelist
   rfid_whitelist:
-    - "A1B2C3D4"
-  ha_token: ""
-  dolibarr_url: "https://dolibarr.example.com"
-  api_token: ""
-  transmit_interval: 300
-  min_session_kwh: 0.05
-  sensor_rfid:   "sensor.alfen_eve_tag_socket_1"
-  sensor_energy: "sensor.alfen_eve_meter_reading_socket_1"
-  sensor_state:  "sensor.alfen_eve_main_state_socket_1"
+    - "EFCD083E"
+
+  # API-Konfiguration für Dolibarr-Übertragung
+  api:
+    dolibarr_url: "https://dolibarr.example.com"
+    api_token: "your_dolapikey_here"
+    transmit_interval: 300
+    timeout: 30
 
 schema:
   log_level: "list(DEBUG|INFO|WARNING|ERROR)"
-  wallbox_id: str
-  rfid_whitelist:
-    - str
-  ha_token: str
-  dolibarr_url: str
-  api_token: str
-  transmit_interval: int
-  min_session_kwh: float
-  sensor_rfid: str
-  sensor_energy: str
-  sensor_state: str
+  wallboxes: "list"
+  wallbox_id: "str"
+  rfid_whitelist: "list(str)"
+  api:
+    dolibarr_url: "str"
+    api_token: "str"
+    transmit_interval: "int"
+    timeout: "int"
+
+logging:
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "5"

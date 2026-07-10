@@ -1,0 +1,34 @@
+Copyright (c) 2026 systemwerk.de / iron-exx. Alle Rechte vorbehalten.
+All Rights Reserved.
+
+Diese Software (ExpenseCharge — Home Assistant Add-on "wallbox-dolibarr" und
+das Dolibarr-Modul "wallboxbilling", einschließlich Quellcode, Dokumentation
+und Assets in diesem Repository) ist proprietäre und vertrauliche Software.
+
+Es ist nicht gestattet, diese Software oder Teile davon ohne vorherige
+ausdrückliche schriftliche Genehmigung des Rechteinhabers zu:
+
+  - kopieren, verändern oder abgeleitete Werke davon erstellen,
+  - verbreiten, veröffentlichen, sublizenzieren oder verkaufen,
+  - in andere Produkte oder Dienste einzubinden,
+  - öffentlich zugänglich zu machen oder zu hosten.
+
+Jegliche Nutzung außerhalb einer ausdrücklich erteilten Genehmigung ist
+untersagt. Der Quellcode wird ohne jegliche Gewährleistung bereitgestellt.
+
+---
+
+Copyright (c) 2026 systemwerk.de / iron-exx. All rights reserved.
+
+This software (ExpenseCharge — the Home Assistant add-on "wallbox-dolibarr"
+and the Dolibarr module "wallboxbilling", including source code,
+documentation, and assets in this repository) is proprietary and
+confidential.
+
+No part of this software may be copied, modified, distributed, published,
+sublicensed, sold, incorporated into other products or services, or made
+publicly available without prior express written permission from the
+copyright holder.
+
+Any use outside an explicitly granted permission is prohibited. The source
+code is provided without any warranty of any kind.

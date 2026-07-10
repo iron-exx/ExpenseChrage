@@ -1,192 +1,141 @@
 <?php
 /**
- *  modWallboxbilling.class.php — Wallbox Billing Modul Descriptor
+ * modWallboxbilling.class.php — Wallbox Billing Modul Descriptor v2
  *
- *  Schreibt RFID-basierte Wallbox-Ladevorgänge direkt als Positionen in
- *  die Dolibarr-Spesenabrechnung des jeweiligen Mitarbeiters. Pro Monat
- *  und Mitarbeiter wird automatisch ein Draft-Report erstellt oder ein
- *  bestehender erweitert. RFID-Hashes werden SHA-256-gehasht persistiert
- *  und sind Soft-Deletable für §147-AO-Aufbewahrungspflicht (10 Jahre).
- *
- *  @author    Wallbox-Dolibarr
- *  @version   1.1.4
+ * Schlankes Modul: nur RFID-Zuordnungstabelle, kein Cron, kein Export.
+ * Session-Daten gehen direkt in llx_expensereport / llx_expensereport_det.
  */
 
-require_once DOL_DOCUMENT_ROOT.'/core/modules/DolibarrModules.class.php';
+include_once DOL_DOCUMENT_ROOT.'/core/modules/DolibarrModules.class.php';
 
-/**
- * Klasse für Wallbox Billing Modul
- */
 class modWallboxbilling extends DolibarrModules
 {
-    /**
-     * Konstruktor
-     */
     public function __construct($db)
     {
-        global $langs, $conf;
+        global $conf, $langs;
 
         $this->db = $db;
-        $this->numero = 104000; // Modul-Nummer (frei wählbar, > 100000)
-        $this->rights_class = 'wallboxbilling';
-        $this->family = "financial"; // Familie: Finanzen
-        $this->module_position = 80; // Position im Menü
 
-        // name muss ein einfacher String sein — kein Array (Dolibarr-Pflicht)
-        $this->name = preg_replace('/^mod/i', '', get_class($this)); // → 'Wallboxbilling'
-        $this->description = 'WallboxbillingDescription'; // wird über lang-Datei aufgelöst
+        $this->numero         = 104000;
+        $this->rights_class   = 'wallboxbilling';
+        $this->family         = 'financial';
+        $this->module_position = '80';
 
-        $this->version = '1.1.4';
-        // const_name muss ein gültiger SQL/PHP-Konstanten-Name sein —
-        // strtoupper(name) enthält Leerzeichen, daher fix auf den Modul-Slug.
-        $this->const_name = 'MAIN_MODULE_'.strtoupper($this->name); // MAIN_MODULE_WALLBOXBILLING
-        $this->special = 0;
-        $this->picto = 'fa-bolt'; // FontAwesome-Picto (universell verfügbar)
-        $this->editor_name = 'Wallbox-Dolibarr';
-        $this->editor_url = '';
+        // Name: Klassenname ohne führendes "mod" — Dolibarr erwartet einen String, kein Array
+        $this->name = preg_replace('/^mod/i', '', get_class($this));
 
-        $this->phpmin = array(7, 4);
-        $this->need_dolibarr_version = array(19, 0);
-        $this->module_parts = array(
-            'triggers' => 0,
-            'login' => 0,
-            'substitutions' => 0,
-            'menus' => 0,
-            'tpl' => 0,
-            'barcode' => 0,
-            'models' => 0,
-            'theme' => 0,
-            'css' => array(),
-            'js' => array(),
-            'hooks' => array(),
-            'moduleforexternal' => 0,
-            'apis' => 1,
-        );
-        $this->config_page_url = array('setup.php@wallboxbilling');
+        $this->description = 'ExpenseCharge — Ladevorgänge. Spesen. Abgerechnet.';
 
-        // Abhängigkeiten
-        $this->depends = array(); // Keine besonderen Abhängigkeiten
-        $this->requiredby = array();
+        $this->version    = '2.2.0';
+        $this->const_name = 'MAIN_MODULE_'.strtoupper($this->name);
+        $this->special    = 0;
+        $this->picto      = 'fa-charging-station';
+
+        // Konfigurationsseite — Dolibarr löst "X@modul" zu custom/modul/admin/X auf,
+        // fügt "admin/" also selbst ein. Datei liegt daher unter admin/admin.php.
+        $this->config_page_url = array('admin.php@wallboxbilling');
+
+        // Sprachdatei des Moduls — @modulname-Syntax für Dateien im Modul-Verzeichnis
+        $this->langfiles = array('wallboxbilling@wallboxbilling');
+
+        $this->depends      = array();
+        $this->requiredby   = array();
         $this->conflictwith = array();
-        $this->langfiles = array("wallboxbilling@wallboxbilling");
 
-        // API-Endpunkt Registrierung (API-01, API-02)
-        // API-Endpoint: receive.php (custom PHP, kein REST-Routing über api_class)
-        $this->api_class = array();
+        $this->phpmin             = array(7, 1);
+        $this->need_dolibarr_version = array(17, 0);
 
-        // Berechtigungen — minimal in 1.1.0 (nur Konfigurationszugriff)
+        // Berechtigungen — Schlüssel [4] entspricht $user->rights->wallboxbilling->{[4]}
         $this->rights = array();
         $r = 0;
+
         $this->rights[$r][0] = 104001;
-        $this->rights[$r][1] = 'Manage RFID mapping and pricing';
-        $this->rights[$r][4] = 'config';
-        $this->rights[$r][5] = 'write';
+        $this->rights[$r][1] = 'View own charging sessions';
+        $this->rights[$r][4] = 'lire';
         $r++;
 
-        // Ab 1.1.0: kein Cronjob mehr — Sessions werden direkt beim Empfang
-        // in die Spesenabrechnung des Mitarbeiters geschrieben (siehe receive.php).
-        $this->cronjobs = array();
-
-        // Menüs (Hauptmenü + Untermenüs)
-        // Ab 1.1.0: Sessions werden direkt in Spesenabrechnungen geschrieben.
-        // Nur noch die Konfigurations-Seite ist erreichbar (RFID-Mapping, Preise).
-        $this->menu = array();
-        $m = 0;
-        $this->menu[$m++] = array(
-            'fk_menu' => 0,
-            'type' => 'top',
-            'titre' => 'WallboxBilling',
-            'prefix' => img_picto('', $this->picto, 'class="pictofixedwidth valignmiddle"'),
-            'mainmenu' => 'wallboxbilling',
-            'leftmenu' => '',
-            'url' => '/custom/wallboxbilling/admin/setup.php',
-            'langs' => 'wallboxbilling@wallboxbilling',
-            'position' => 1000 + $m,
-            'enabled' => '$conf->wallboxbilling->enabled',
-            'perms' => '$user->admin',
-            'target' => '',
-            'user' => 2,
-        );
-        $this->menu[$m++] = array(
-            'fk_menu' => 'fk_mainmenu=wallboxbilling',
-            'type' => 'left',
-            'titre' => 'WallboxBillingSetup',
-            'mainmenu' => 'wallboxbilling',
-            'leftmenu' => 'wallboxbilling_setup',
-            'url' => '/custom/wallboxbilling/admin/setup.php',
-            'langs' => 'wallboxbilling@wallboxbilling',
-            'position' => 1000 + $m,
-            'enabled' => '$conf->wallboxbilling->enabled',
-            'perms' => '$user->admin',
-            'target' => '',
-            'user' => 2,
-        );
-
-        // Ab 1.1.0: kein Export-Modul mehr — die Ladevorgänge stecken in
-        // den Standard-Spesenabrechnungen, die Dolibarr von Haus aus exportieren kann.
-        $this->export_modules = array();
-
-        // WICHTIG: init() darf NICHT im Konstruktor aufgerufen werden — die
-        // Methode wird von Dolibarr's Modul-Aktivierung explizit getriggert.
+        $this->rights[$r][0] = 104002;
+        $this->rights[$r][1] = 'Manage all charging sessions and RFID mappings';
+        $this->rights[$r][4] = 'admin';
     }
 
     /**
-     * Modul-Aktivierung (Dolibarr ruft das beim Aktivieren auf).
+     * Wird beim Aktivieren des Moduls aufgerufen.
+     * Erstellt Tabellen + registriert Rechte/Konstanten via _init().
      *
-     * Legt die Tabelle llx_wallbox_rfid (RFID→User-Mapping) an, registriert
-     * Berechtigungen, Menüs und Konstanten via _init(). Keine Cronjobs mehr,
-     * keine Sessions-Tabelle — Sessions werden direkt in die Spesenabrechnung
-     * geschrieben (siehe receive.php).
-     *
-     * @param string $options Optionen (z.B. 'noboxes')
-     * @return int 1 = OK, 0 = KO
+     * @param string $options Optionen ('', 'noboxes')
+     * @return int 1 = OK, <=0 = Fehler
      */
     public function init($options = '')
     {
-        // Alte Menü-Einträge zuerst löschen — verhindert "already exists" bei Neuinstallation
-        $this->delete_menus();
+        // Bestehende Rechte vor Neuanlage entfernen
+        $this->remove($options);
 
-        // SQL-Statements für Tabellen + Indizes
-        // Ab 1.1.0: nur noch wallbox_rfid (RFID → User Mapping). Sessions werden
-        // direkt in llx_expensereport_det geschrieben — keine eigene Session-Tabelle.
-        $sql = array();
-
-        $sql[] = "CREATE TABLE IF NOT EXISTS `llx_wallbox_rfid` (
-            `rowid` INTEGER AUTO_INCREMENT PRIMARY KEY NOT NULL,
-            `fk_user` INTEGER NOT NULL,
-            `rfid_hash` VARCHAR(64) NOT NULL,
-            `label` VARCHAR(255) DEFAULT '',
-            `price_kwh` DECIMAL(10,4) DEFAULT NULL,
-            `active` TINYINT(1) NOT NULL DEFAULT 1,
-            `entity` INTEGER DEFAULT 1,
-            `date_creation` DATETIME NOT NULL,
-            `tms` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        // Tabelle anlegen
+        $create_sql = "CREATE TABLE IF NOT EXISTS `".MAIN_DB_PREFIX."wallbox_rfid` (
+            `rowid`         INTEGER AUTO_INCREMENT PRIMARY KEY NOT NULL,
+            `fk_user`       INTEGER NOT NULL,
+            `rfid_hash`     VARCHAR(64) NOT NULL,
+            `price_kwh`     DECIMAL(8,4) NOT NULL DEFAULT 0.3000,
+            `cost_center`   VARCHAR(100) NOT NULL DEFAULT '',
+            `date_creation` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            `tms`           TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             UNIQUE KEY `uk_rfid_hash` (`rfid_hash`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8";
 
-        return $this->_init($sql, $options);
+        if ($this->db->query($create_sql) === false) {
+            dol_syslog('modWallboxbilling init() CREATE TABLE error: '.$this->db->lasterror(), LOG_ERR);
+        }
+
+        // Upgrade-Pfad: fehlende Spalten ergänzen
+        $this->_addColumnIfMissing(
+            MAIN_DB_PREFIX.'wallbox_rfid',
+            'price_kwh',
+            "ALTER TABLE `".MAIN_DB_PREFIX."wallbox_rfid`"
+            ." ADD COLUMN price_kwh DECIMAL(8,4) NOT NULL DEFAULT 0.3000 AFTER rfid_hash"
+        );
+        $this->_addColumnIfMissing(
+            MAIN_DB_PREFIX.'wallbox_rfid',
+            'cost_center',
+            "ALTER TABLE `".MAIN_DB_PREFIX."wallbox_rfid`"
+            ." ADD COLUMN cost_center VARCHAR(100) NOT NULL DEFAULT '' AFTER price_kwh"
+        );
+        // Freitext-Label — vom Nutzer selbst vergeben, um Tags ohne Klartext-Anzeige
+        // unterscheidbar zu machen (z.B. "Blaue Ersatzkarte"). Enthält NIE den Tag-Code.
+        $this->_addColumnIfMissing(
+            MAIN_DB_PREFIX.'wallbox_rfid',
+            'label',
+            "ALTER TABLE `".MAIN_DB_PREFIX."wallbox_rfid`"
+            ." ADD COLUMN label VARCHAR(100) NOT NULL DEFAULT '' AFTER cost_center"
+        );
+
+        // Rechte, Konstanten und Menüs in die DB eintragen (Standard-Dolibarr-Mechanismus)
+        return $this->_init(array(), $options);
     }
 
     /**
-     * Modul-Deaktivierung (Dolibarr Standard).
+     * Wird beim Deaktivieren des Moduls aufgerufen.
      *
      * @param string $options Optionen
-     * @return int 1 = OK
+     * @return int 1 = OK, <=0 = Fehler
      */
     public function remove($options = '')
     {
-        $sql = array();
-        return $this->_remove($sql, $options);
+        return $this->_remove(array(), $options);
     }
 
-    /**
-     * Modul-Deinstallation
-     */
-    public function uninstall()
+    private function _addColumnIfMissing($table, $column, $alter_sql)
     {
-        global $db;
-        $this->delete_permissions();
-        return 1;
+        $res = $this->db->query(
+            "SHOW COLUMNS FROM `".$this->db->escape($table)."` LIKE '".$this->db->escape($column)."'"
+        );
+        if (!$res || $this->db->num_rows($res) == 0) {
+            if ($this->db->query($alter_sql) === false) {
+                dol_syslog(
+                    "modWallboxbilling _addColumnIfMissing($column) error: ".$this->db->lasterror(),
+                    LOG_ERR
+                );
+            }
+        }
     }
 }
-?>
