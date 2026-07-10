@@ -222,8 +222,10 @@ $resql = $db->query(
 );
 if (!$resql) {
     $db->rollback();
-    dol_syslog('WallboxBilling receive.php: expensereport_det INSERT failed: '.$db->lasterror(), LOG_ERR);
-    wb_json_exit(500, array('success' => false, 'error' => 'Internal server error. See system log.'));
+    $db_err = $db->lasterror();
+    dol_syslog('WallboxBilling receive.php: expensereport_det INSERT failed: '.$db_err, LOG_ERR);
+    // TODO: DB-Fehlertext nach erfolgreicher Diagnose wieder entfernen (nur intern, addon<->dolibarr)
+    wb_json_exit(500, array('success' => false, 'error' => 'Internal server error: '.$db_err));
 }
 
 $line_id = (int) $db->last_insert_id(MAIN_DB_PREFIX.'expensereport_det');
