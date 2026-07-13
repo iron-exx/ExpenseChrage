@@ -177,14 +177,17 @@ if ($has_hash) {
 
 $total_ht = round($kwh * $price_kwh, 2);
 
-// Idempotenz: identische Session (User + Start + Ende) nicht doppelt anlegen
+// Idempotenz: identische Session (User + Start + Ende) nicht doppelt anlegen.
+// LIKE-Wildcards im wallbox_id-Anteil escapen (\w erlaubt '_', in LIKE ein
+// Platzhalter) — sonst könnte der Duplikat-Check zu breit matchen.
 $date_sql_check = $db->idate($end_ts);
+$like_prefix = addcslashes('Wallbox '.$wallbox_id.':', '%_\\');
 $res_dup = $db->query(
     "SELECT ed.rowid FROM ".MAIN_DB_PREFIX."expensereport_det ed"
    ." INNER JOIN ".MAIN_DB_PREFIX."expensereport er ON er.rowid = ed.fk_expensereport"
    ." WHERE er.fk_user_author=".(int)$fk_user
    ."   AND ed.date='".$date_sql_check."'"
-   ."   AND ed.comments LIKE '".$db->escape('Wallbox '.$wallbox_id.':')."%'"
+   ."   AND ed.comments LIKE '".$db->escape($like_prefix)."%'"
    ." LIMIT 1"
 );
 if ($res_dup && $db->num_rows($res_dup) > 0) {
@@ -222,10 +225,9 @@ $resql = $db->query(
 );
 if (!$resql) {
     $db->rollback();
-    $db_err = $db->lasterror();
-    dol_syslog('WallboxBilling receive.php: expensereport_det INSERT failed: '.$db_err, LOG_ERR);
-    // TODO: DB-Fehlertext nach erfolgreicher Diagnose wieder entfernen (nur intern, addon<->dolibarr)
-    wb_json_exit(500, array('success' => false, 'error' => 'Internal server error: '.$db_err));
+    // Details nur ins Server-Syslog — nicht in die Response (kein Schema-Leak)
+    dol_syslog('WallboxBilling receive.php: expensereport_det INSERT failed: '.$db->lasterror(), LOG_ERR);
+    wb_json_exit(500, array('success' => false, 'error' => 'Internal server error. See system log.'));
 }
 
 $line_id = (int) $db->last_insert_id(MAIN_DB_PREFIX.'expensereport_det');
@@ -245,10 +247,8 @@ $res_upd = $db->query(
 );
 if (!$res_upd) {
     $db->rollback();
-    $db_err = $db->lasterror();
-    dol_syslog('WallboxBilling receive.php: expensereport SUM UPDATE failed: '.$db_err, LOG_ERR);
-    // TODO: DB-Fehlertext nach Diagnose wieder entfernen (nur intern, addon<->dolibarr)
-    wb_json_exit(500, array('success' => false, 'error' => 'Internal error updating expense report totals: '.$db_err));
+    dol_syslog('WallboxBilling receive.php: expensereport SUM UPDATE failed: '.$db->lasterror(), LOG_ERR);
+    wb_json_exit(500, array('success' => false, 'error' => 'Internal error updating expense report totals'));
 }
 
 $db->commit();

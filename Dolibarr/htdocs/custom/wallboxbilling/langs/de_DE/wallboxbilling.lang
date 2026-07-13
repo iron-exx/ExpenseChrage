@@ -40,3 +40,4 @@ WallboxAssignedSince=zugeordnet seit
 WallboxConfirmDeleteRFID=RFID-Zuordnung wirklich löschen?
 WallboxAddTag=Tag hinzufügen
 WallboxUpdateTag=Aktualisieren
+WallboxSaveError=Speichern fehlgeschlagen — Details siehe Server-Log.

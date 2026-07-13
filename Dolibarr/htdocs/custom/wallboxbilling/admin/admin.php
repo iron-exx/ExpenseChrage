@@ -46,9 +46,9 @@ $allowed_tabs = array('config', 'rfid');
 $tab = GETPOST('tab', 'aZ09');
 if (!in_array($tab, $allowed_tabs, true)) $tab = 'config';
 
-// Diagnose-Wrapper: fängt auch \Error (z.B. "Call to undefined function") ab
-// und zeigt die Meldung sichtbar an, statt einer leeren HTTP-500-Seite.
-// TODO nach erfolgreicher Diagnose wieder entfernen.
+// Schutz-Wrapper: fängt auch \Error (z.B. "Call to undefined function") ab,
+// damit statt einer leeren HTTP-500-Seite eine saubere Meldung erscheint.
+// Details gehen NUR ins Server-Syslog (kein Pfad-/Interna-Leak in der UI).
 try {
 
     // --- Action: Konfiguration speichern ---
@@ -164,11 +164,8 @@ try {
     }
 
 } catch (\Throwable $e) {
-    setEventMessages(
-        'PHP-Fehler in admin.php: '.$e->getMessage().' (Zeile '.$e->getLine().' in '.basename($e->getFile()).')',
-        null,
-        'errors'
-    );
+    // Generische Meldung für den Nutzer — technische Details nur ins Syslog
+    setEventMessages($langs->trans('WallboxSaveError'), null, 'errors');
     dol_syslog('WallboxBilling admin.php exception: '.$e->getMessage().' at '.$e->getFile().':'.$e->getLine(), LOG_ERR);
 }
 
