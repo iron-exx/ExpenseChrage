@@ -1,6 +1,6 @@
 name: "ExpenseCharge"
 description: "ExpenseCharge — Ladevorgänge. Spesen. Abgerechnet."
-version: "1.6.4"
+version: "1.7.0"
 slug: "wallbox-dolibarr"
 init: false
 
@@ -45,6 +45,10 @@ options:
   # Mindest-kWh, ab dem eine Session als echte Ladung gilt (sonst "discarded")
   min_session_kwh: 0.05
 
+  # Sicherung: hängende Session nach so vielen Stunden zwangsweise schließen
+  # (großzügig, damit normale Lastmanagement-Pausen NICHT betroffen sind)
+  max_session_hours: 24
+
   # API-Konfiguration für Dolibarr-Übertragung
   api:
     dolibarr_url: "https://dolibarr.example.com"
@@ -67,6 +71,7 @@ schema:
   sensor_state: "str"
   ha_token: "password"
   min_session_kwh: "float"
+  max_session_hours: "float"
   api:
     dolibarr_url: "str"
     api_token: "str"

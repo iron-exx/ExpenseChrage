@@ -95,30 +95,47 @@ def _parse_energy(value):
 
 # Wallbox-Status: substring-Match (case-insensitive) gegen den echten Sensor-Wert.
 # Alfen-Wallbox-States: "Available", "Preparing", "Charging Power On",
-# "Charging Stopped", "Suspended EV", "Suspended EVSE", "Finishing",
-# "Reserved", "Unavailable", "Faulted". Wir gruppieren nach Verhalten:
-# Alfen-States die das ENDE einer Ladung markieren. Wird VOR _is_charging_state
-# geprüft (Vorrang), da z.B. "Charging Terminating" zwar 'charging' enthält,
-# aber das Lade-Ende bedeutet.
-_IDLE_KEYWORDS = [
-    'available', 'idle', 'finished', 'finishing', 'terminating',
-    'stopped', 'disconnect', 'unavailable', 'faulted', 'suspend', 'error',
+# "Charging Stopped", "Charging Power Off", "Suspended EV", "Suspended EVSE",
+# "Finishing", "Reserved", "Unavailable", "Faulted".
+#
+# WICHTIG (Lastmanagement): Wir unterscheiden ZWEI Arten von "lädt gerade nicht":
+#   - ENDE  = Fahrzeug abgesteckt / Sitzung abgeschlossen / Fehler → Session beenden
+#   - PAUSE = Fahrzeug ANGESTECKT, aber gerade kein Strom (Lastmanagement drosselt
+#             auf 0, EV pausiert, kurz gestoppt) → Session OFFEN halten, damit der
+#             gesamte Ladevorgang über die Pause hinweg als EINE Session erfasst
+#             wird (kumulativer Zähler liefert die korrekte Gesamt-kWh).
+# Prüf-Vorrang: ENDE > PAUSE > CHARGING.
+_END_KEYWORDS = [
+    'available', 'finishing', 'finished', 'terminating', 'disconnect',
+    'unavailable', 'faulted', 'reserved', 'error',
+]
+_PAUSE_KEYWORDS = [
+    'suspend', 'stopped', 'power off', 'paused', 'preparing',
 ]
 
-def _is_idle_state(s):
-    """True wenn die Wallbox keine aktive Ladung (mehr) hat: abgeschlossen,
-    am Beenden, Stecker raus, Fehler oder pausiert."""
+def _is_end_state(s):
+    """True nur bei ECHTEM Ende: Fahrzeug weg, abgeschlossen oder Fehler."""
     if not s:
         return False
     sl = s.lower()
-    return any(k in sl for k in _IDLE_KEYWORDS)
+    return any(k in sl for k in _END_KEYWORDS)
 
-def _is_charging_state(s):
-    """True wenn die Wallbox aktiv lädt (Energie fließt). Idle-Zustände haben
-    Vorrang — 'Charging Terminating' zählt z.B. als Ende, nicht als Laden."""
+def _is_pause_state(s):
+    """True bei angesteckter, aber pausierter Ladung (Lastmanagement/EV-Pause).
+    Beendet die Session NICHT."""
     if not s:
         return False
-    if _is_idle_state(s):
+    if _is_end_state(s):
+        return False
+    sl = s.lower()
+    return any(k in sl for k in _PAUSE_KEYWORDS)
+
+def _is_charging_state(s):
+    """True wenn die Wallbox aktiv lädt (Energie fließt). ENDE- und PAUSE-
+    Zustände haben Vorrang ('Charging Stopped' zählt z.B. als Pause)."""
+    if not s:
+        return False
+    if _is_end_state(s) or _is_pause_state(s):
         return False
     return 'charging' in s.lower()
 
@@ -393,11 +410,20 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
     if entity_id == sensor_state:
         active = session_manager.get_active_session()
 
-        # Idle hat VORRANG vor Charging — "Charging Terminating" zählt als Ende.
-        if _is_idle_state(state_value):
+        # ENDE (Fahrzeug abgesteckt/abgeschlossen/Fehler) — beendet die Session.
+        if _is_end_state(state_value):
             if active:
                 await _end_active_session(f'state={state_value}')
             _pending_auth = None  # Auth verbraucht
+            return
+
+        # PAUSE (Lastmanagement/EV): Fahrzeug bleibt angesteckt → Session OFFEN
+        # halten, NICHT beenden. Bei Wiederaufnahme läuft dieselbe Session weiter.
+        if _is_pause_state(state_value):
+            if active:
+                _LOGGER.info("Ladung pausiert (state='%s') — Session #%s bleibt offen "
+                             "(Lastmanagement/EV-Pause, wird als EIN Vorgang erfasst).",
+                             state_value, active['id'])
             return
 
         if _is_charging_state(state_value):
@@ -605,6 +631,36 @@ async def main():
                         last_transmit = current_time
 
                 await asyncio.sleep(1)
+
+        # Sicherung gegen hängende Sessions: Eine Session endet normalerweise
+        # beim Abstecken (state=Available). Falls dieses Event ausbleibt (z.B.
+        # Sensor-/Websocket-Aussetzer), würde eine "active" Session ewig offen
+        # bleiben und JEDE weitere Ladung blockieren (kein Doppelstart). Diese
+        # Wache schließt sie nach max_session_hours. Bewusst großzügig, damit
+        # normale Lastmanagement-Pausen (Minuten–Stunden) NICHT betroffen sind.
+        async def stale_session_guard():
+            import time as _t
+            max_hours = float(current_config.get("max_session_hours", 24))
+            while True:
+                await asyncio.sleep(300)  # alle 5 Minuten
+                try:
+                    active = session_manager.get_active_session()
+                    if not active:
+                        continue
+                    started = active.get("start_time")
+                    if not started:
+                        continue
+                    age_h = (datetime.now() - datetime.fromisoformat(started)).total_seconds() / 3600.0
+                    if age_h >= max_hours:
+                        _LOGGER.warning(
+                            "Session #%s seit %.1f h aktiv (> %.0f h) ohne Absteck-Event "
+                            "— wird als Sicherung beendet.", active["id"], age_h, max_hours)
+                        await _end_active_session("max_duration_guard")
+                except Exception as exc:  # Wache darf nie den Loop killen
+                    _LOGGER.warning("stale_session_guard Fehler: %s", exc)
+
+        asyncio.create_task(stale_session_guard())
+        _LOGGER.info("Session-Wache gestartet (max_session_hours)")
 
         # Hintergrund-Task starten
         if api_client:
