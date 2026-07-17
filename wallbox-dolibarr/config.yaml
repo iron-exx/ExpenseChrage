@@ -4,7 +4,7 @@ version: "1.7.0"
 slug: "wallbox-dolibarr"
 init: false
 
-image: "ghcr.io/iron-exx/{arch}-addon-expensecharge"
+image: "ghcr.io/sandro-sw/{arch}-addon-expensecharge"
 
 arch:
   - aarch64

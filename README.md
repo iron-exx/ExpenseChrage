@@ -79,7 +79,7 @@ Jede Ladung landet sofort als Position im Spesenreport des Mitarbeiters. Pro Mon
 
 ### 2. Home Assistant Addon
 
-1. Repository hinzufügen: `https://github.com/iron-exx/ExpenseChrage`
+1. Repository hinzufügen: `https://github.com/sandro-sw/ExpenseCharge`
 2. Addon „ExpenseCharge" installieren
 3. Konfiguration:
    ```yaml
@@ -160,4 +160,4 @@ Proprietär — alle Rechte vorbehalten. Siehe `LICENSE`.
 
 ## Support
 
-GitHub: [iron-exx/ExpenseChrage](https://github.com/iron-exx/ExpenseChrage)
+GitHub: [sandro-sw/ExpenseCharge](https://github.com/sandro-sw/ExpenseCharge)

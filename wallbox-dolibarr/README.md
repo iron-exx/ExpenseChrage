@@ -17,7 +17,7 @@ Erfasst RFID-basierte Ladevorgänge der Alfen-Eve-Wallbox und schreibt sie direk
 
 ## Installation
 
-1. Repository hinzufügen: `https://github.com/iron-exx/ExpenseChrage`
+1. Repository hinzufügen: `https://github.com/sandro-sw/ExpenseCharge`
 2. Addon „ExpenseCharge" installieren
 3. Konfiguration anpassen (siehe unten)
 4. Addon starten
