@@ -399,10 +399,14 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
                             hash_rfid(sv)[:16])
             return
 
-        # Tag als "pending auth" merken — falls Charging erst später startet
+        # Tag merken — in-memory (schneller Pfad) UND persistent. Persistent,
+        # weil das Lastmanagement den Ladebeginn um STUNDEN verzögern kann und
+        # der In-Memory-Merker einen Addon-Neustart nicht überlebt. Gültig bis
+        # Abstecken/neuer Tag — kein Zeitfenster mehr.
         _pending_auth = {'rfid_hex': sv, 'time': time.time()}
+        session_manager.set_pending_auth(sv)
 
-        # Session sofort starten (klassischer Fall: Karte → Laden)
+        # Session sofort starten (klassischer Fall: Karte → sofort Laden)
         await _start_session_for(sv, 'rfid_event')
         return
 
@@ -411,10 +415,12 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
         active = session_manager.get_active_session()
 
         # ENDE (Fahrzeug abgesteckt/abgeschlossen/Fehler) — beendet die Session.
+        # Fahrzeug ist weg → Autorisierung (in-memory UND persistent) verfällt.
         if _is_end_state(state_value):
             if active:
                 await _end_active_session(f'state={state_value}')
-            _pending_auth = None  # Auth verbraucht
+            _pending_auth = None
+            session_manager.clear_pending_auth()
             return
 
         # PAUSE (Lastmanagement/EV): Fahrzeug bleibt angesteckt → Session OFFEN
@@ -436,24 +442,30 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
                               state_value, active['id'])
                 return
             whitelist = current_config.get('rfid_whitelist', [])
+            # Tag-Quelle in Reihenfolge der Frische: frisches In-Memory-Event →
+            # anliegender Tag → PERSISTIERTE Autorisierung (überlebt Neustart
+            # und beliebig lange Lastmanagement-Verzögerung). Die Wallbox lädt
+            # nie ohne Tag, also ist die letzte Autorisierung die richtige.
+            auth_hex = None
+            auth_src = None
             if _pending_auth and (time.time() - _pending_auth['time']) < _PENDING_AUTH_WINDOW:
-                rfid_hex = _pending_auth['rfid_hex']
-                _LOGGER.info("Session-Start nachträglich via charging-state — "
-                             "RFID-Auth war vor %.0f Sekunden",
-                             time.time() - _pending_auth['time'])
-                await _start_session_for(rfid_hex, f'charging_state={state_value}')
-                _pending_auth = None
+                auth_hex, auth_src = _pending_auth['rfid_hex'], 'frisches Auth-Event'
             elif _latest_rfid and _latest_rfid.lower() not in _RFID_NONE_VALUES \
                     and session_manager.is_rfid_authorized(_latest_rfid, whitelist):
-                # Alfen hält den Tag stundenlang ohne neues Event: kein frisches
-                # Pending-Auth, aber der aktuell anliegende Tag ist gültig →
-                # damit die Session starten.
-                _LOGGER.info("Session-Start via charging-state mit anliegendem Tag "
-                             "(kein frisches Auth-Event, aber Tag gültig).")
-                await _start_session_for(_latest_rfid, f'charging_state_held_tag={state_value}')
+                auth_hex, auth_src = _latest_rfid, 'anliegender Tag'
             else:
-                _LOGGER.warning("Wallbox lädt (state='%s') aber kein gültiger RFID-Tag "
-                                "anliegend. Session wird NICHT erfasst.", state_value)
+                persisted = session_manager.get_pending_auth()
+                if persisted and session_manager.is_rfid_authorized(persisted, whitelist):
+                    auth_hex, auth_src = persisted, 'persistierte Autorisierung (Lastmanagement-Verzögerung)'
+
+            if auth_hex:
+                _LOGGER.info("Session-Start via charging-state — Tag-Quelle: %s.", auth_src)
+                await _start_session_for(auth_hex, f'charging_state={state_value}')
+                _pending_auth = None
+            else:
+                _LOGGER.warning("Wallbox lädt (state='%s') aber KEINE Autorisierung "
+                                "bekannt (weder Event noch persistiert). Session wird "
+                                "NICHT erfasst.", state_value)
             return
 
         _LOGGER.debug("Wallbox-State Zwischenzustand: '%s'", state_value)
@@ -512,23 +524,31 @@ async def check_startup_session():
     _LOGGER.info("Wallbox-Zustand beim Start: state='%s', rfid='%s', zaehler=%s kWh",
                  state_val, rfid_val, ('%.3f' % seeded) if seeded is not None else 'n/a')
 
-    # Wenn gerade geladen wird UND ein gültiger Tag anliegt → Session starten
+    # Wenn gerade geladen wird → Session starten. Tag-Quelle: anliegender Tag,
+    # sonst PERSISTIERTE Autorisierung (überlebt Neustart; die Wallbox lädt nie
+    # ohne Tag, also gehört die laufende Ladung zur letzten Autorisierung).
     if _is_charging_state(state_val):
         whitelist = current_config.get('rfid_whitelist', [])
+        startup_hex = None
         if rfid_val and rfid_val.lower() not in _RFID_NONE_VALUES \
            and session_manager.is_rfid_authorized(rfid_val, whitelist):
+            startup_hex = rfid_val
+        else:
+            persisted = session_manager.get_pending_auth()
+            if persisted and session_manager.is_rfid_authorized(persisted, whitelist):
+                startup_hex = persisted
+        if startup_hex:
             _LOGGER.warning(
                 "Wallbox lädt bereits beim Addon-Start (state=%s) — starte Session "
-                "mit aktuellem Tag. Hinweis: bisher geladene kWh sind verloren, "
-                "ab jetzt wird wieder erfasst.", state_val
-            )
-            await _start_session_for(rfid_val, 'startup_charging_detected')
+                "mit %s. Bereits geladene kWh vor diesem Start sind für DIESE "
+                "Session verloren, ab jetzt wird erfasst.",
+                state_val, "aktuellem Tag" if startup_hex == rfid_val else "persistierter Autorisierung")
+            await _start_session_for(startup_hex, 'startup_charging_detected')
         else:
             _LOGGER.warning(
-                "Wallbox lädt (state=%s) aber kein gültiger RFID-Tag (rfid=%s). "
-                "Diese Ladung wird NICHT erfasst. Manuell nachtragen unter "
-                "⚡ Erfassen im Addon-UI.", state_val, rfid_val
-            )
+                "Wallbox lädt (state=%s) aber keine bekannte Autorisierung "
+                "(rfid=%s, keine persistierte). Diese Ladung wird NICHT erfasst.",
+                state_val, rfid_val)
 
     # Falls gerade ein Tag anliegt, ihn als pending-auth merken (für Charging-Wechsel)
     if rfid_val and rfid_val.lower() not in _RFID_NONE_VALUES:

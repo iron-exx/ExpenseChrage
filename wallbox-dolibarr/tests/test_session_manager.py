@@ -88,6 +88,25 @@ def test_transmit_prefers_login_over_rfid_hash(sm):
     assert "rfid_hash" not in payload
 
 
+def test_pending_auth_persists_and_survives_reopen(tmp_path):
+    """Persistierte Autorisierung überlebt einen 'Neustart' (neue Instanz auf
+    derselben DB) — nötig für Ladebeginn Stunden nach dem Vorhalten."""
+    db = tmp_path / "sessions.db"
+    sm1 = SessionManager(db_path=str(db))
+    assert sm1.get_pending_auth() is None
+    sm1.set_pending_auth("6C62083E")
+    assert sm1.get_pending_auth() == "6C62083E"
+    # 'Neustart': frische Instanz, gleiche DB
+    sm2 = SessionManager(db_path=str(db))
+    assert sm2.get_pending_auth() == "6C62083E"
+    # neuer Tag ersetzt den alten (keine Duplikate)
+    sm2.set_pending_auth("A1B2C3D4")
+    assert sm2.get_pending_auth() == "A1B2C3D4"
+    # Abstecken → gelöscht
+    sm2.clear_pending_auth()
+    assert sm2.get_pending_auth() is None
+
+
 def test_transmit_uses_rfid_hash_when_no_login(sm):
     """Ohne login wird rfid_hash übertragen (physischer Tap)."""
     h = hash_rfid("6C62083E")

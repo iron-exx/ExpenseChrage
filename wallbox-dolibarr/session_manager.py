@@ -93,6 +93,19 @@ class SessionManager:
             except sqlite3.OperationalError:
                 pass  # Spalte existiert bereits
 
+        # Persistente Autorisierung: hält den zuletzt vorgehaltenen, gültigen
+        # Tag über Addon-Neustarts UND beliebig lange Lastmanagement-
+        # Verzögerungen hinweg. Die Wallbox lädt nie ohne Tag — aber das
+        # Lastmanagement kann den Ladebeginn um Stunden verschieben. Ohne
+        # Persistenz ginge die Zuordnung dann verloren. Einzeiler-Tabelle.
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS pending_auth (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                rfid_hex TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        ''')
+
         # Index für rfid_hash (DB-02 Vorbereitung)
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_rfid_hash ON sessions(rfid_hash)
@@ -106,6 +119,34 @@ class SessionManager:
         conn.commit()
         conn.close()
         self._logger.info("SQLite Datenbank initialisiert mit WAL Mode: %s", self.db_path)
+
+    def set_pending_auth(self, rfid_hex: str) -> None:
+        """Merkt den zuletzt vorgehaltenen gültigen Tag dauerhaft (überlebt
+        Neustart + lange Lastmanagement-Verzögerung). Ersetzt einen evtl.
+        vorhandenen älteren Eintrag (neue Autorisierung hat Vorrang)."""
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(
+            "INSERT INTO pending_auth (id, rfid_hex, created_at) VALUES (1, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET rfid_hex=excluded.rfid_hex, created_at=excluded.created_at",
+            (rfid_hex, datetime.now().isoformat()),
+        )
+        conn.commit()
+        conn.close()
+
+    def get_pending_auth(self) -> Optional[str]:
+        """Gibt den persistierten, zuletzt autorisierten Tag zurück (rfid_hex)
+        oder None. Kein Zeitfenster — gültig bis Abstecken/neuer Tag."""
+        conn = sqlite3.connect(self.db_path)
+        row = conn.execute("SELECT rfid_hex FROM pending_auth WHERE id = 1").fetchone()
+        conn.close()
+        return row[0] if row else None
+
+    def clear_pending_auth(self) -> None:
+        """Löscht die persistierte Autorisierung (nach Abstecken/Session-Ende)."""
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("DELETE FROM pending_auth WHERE id = 1")
+        conn.commit()
+        conn.close()
 
     def debounce_rfid(self, rfid_hex: str) -> bool:
         """
