@@ -155,9 +155,16 @@ def load_config():
             config = json.load(f)
             _LOGGER.info("Konfiguration geladen von %s", config_path)
 
+            if isinstance(config.get('ha_token'), str):
+                config['ha_token'] = config['ha_token'].strip()
+
             # API-Konfiguration validieren (Task 3)
             api_config = config.get('api', {})
             if api_config:
+                for key in ('dolibarr_url', 'api_token'):
+                    if isinstance(api_config.get(key), str):
+                        api_config[key] = api_config[key].strip()
+
                 dolibarr_url = api_config.get('dolibarr_url', '')
                 if dolibarr_url and not (dolibarr_url.startswith('http://') or dolibarr_url.startswith('https://')):
                     _LOGGER.warning("API-Konfiguration: dolibarr_url muss mit http:// oder https:// beginnen")
@@ -175,10 +182,10 @@ def load_config():
 class HomeAssistantWebsocket:
     """Verbindung zur Home Assistant Websocket API (D-02, D-10)"""
 
-    def __init__(self, host: str = "homeassistant", port: int = 8123, token: str = ''):
+    def __init__(self, host: str = "homeassistant", port: int = 8123, token: str = '', ws_url: str = ''):
         self.host = host
         self.port = port
-        self.ws_url = f"ws://{host}:{port}/api/websocket"
+        self.ws_url = ws_url or f"ws://{host}:{port}/api/websocket"
         self.access_token = token or os.getenv('SUPERVISOR_TOKEN', '')
         self.session_id: Optional[str] = None
         self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
@@ -615,7 +622,8 @@ async def main():
         token_src = 'SUPERVISOR_TOKEN' if supervisor_token else 'ha_token (Konfiguration)'
         _LOGGER.info("HA-Authentifizierung via %s", token_src)
 
-    ha_ws = HomeAssistantWebsocket(token=ha_token)
+    ha_ws_url = "ws://supervisor/core/websocket" if supervisor_token else "ws://homeassistant:8123/api/websocket"
+    ha_ws = HomeAssistantWebsocket(token=ha_token, ws_url=ha_ws_url)
 
     try:
         # Verbinden

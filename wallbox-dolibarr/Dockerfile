@@ -43,4 +43,4 @@ COPY web_server.py      /usr/local/bin/web_server.py
 COPY utils/             /usr/local/bin/utils/
 RUN chmod a+x /usr/local/bin/main.py
 
-CMD ["python3", "/usr/local/bin/main.py"]
+CMD ["/usr/bin/with-contenv", "python3", "/usr/local/bin/main.py"]
