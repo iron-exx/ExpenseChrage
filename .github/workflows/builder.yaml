@@ -55,6 +55,10 @@ jobs:
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "Addon-Version: $V"
 
+      - name: Owner klein schreiben (GHCR verlangt lowercase)
+        id: owner
+        run: echo "lc=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
       - name: Build & push ${{ matrix.arch }}
         uses: docker/build-push-action@v6
         with:
@@ -67,5 +71,5 @@ jobs:
             BUILD_VERSION=${{ steps.ver.outputs.version }}
             BUILD_ARCH=${{ matrix.arch }}
           tags: |
-            ghcr.io/${{ github.repository_owner }}/${{ matrix.arch }}-addon-expensecharge:${{ steps.ver.outputs.version }}
-            ghcr.io/${{ github.repository_owner }}/${{ matrix.arch }}-addon-expensecharge:latest
+            ghcr.io/${{ steps.owner.outputs.lc }}/${{ matrix.arch }}-addon-expensecharge:${{ steps.ver.outputs.version }}
+            ghcr.io/${{ steps.owner.outputs.lc }}/${{ matrix.arch }}-addon-expensecharge:latest
