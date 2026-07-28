@@ -90,14 +90,18 @@ api:
 | Reines Monitoring ohne Zugriffskontrolle (keine RFID-Pflicht) | `none` | `power_threshold`, `energy_delta` oder `external_boolean` |
 | Eigene, selbst gebaute HA-Logik (Template mit Hysterese/Sonderfällen) | beliebig | `external_boolean` |
 
-| `auth_mode` | Bedeutung |
+**Werte für `auth_mode`** (wer darf laden):
+
+| Wert | Bedeutung |
 |---|---|
 | `tag_hold` | Tag liegt an, solange geladen wird |
 | `tag_pulse` | Tag-Event nur kurz sichtbar (z.B. Wallbox setzt selbst zurück), Ende kommt aus `state_mode` |
 | `tag_toggle` | 1. autorisierter Tap = Start, 2. Tap = Ende — unabhängig vom `state_mode` |
 | `none` | keine Autorisierungspflicht, Start kommt rein aus `state_mode` (reines Logging/Monitoring) |
 
-| `state_mode` | Bedeutung | zusätzliche Optionen |
+**Werte für `state_mode`** (wann wird geladen/beendet):
+
+| Wert | Bedeutung | zusätzliche Optionen (nur bei diesem Wert relevant) |
 |---|---|---|
 | `state_keywords` | Substring-Match gegen `sensor_state` (Alfen-Standard) | `end_keywords`, `pause_keywords` (leer = Alfen-Defaults) |
 | `power_threshold` | Ableitung aus einem Leistungssensor (z.B. vorgeschalteter Shelly EM ohne eigenen Wallbox-Status) | `power_sensor`, `power_threshold_w`, `end_idle_minutes` |
