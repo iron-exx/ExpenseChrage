@@ -286,6 +286,8 @@ async def _start_session_for(rfid_hex: str, source: str):
     if session_manager.get_active_session():
         return None  # bereits aktiv — kein Doppelstart
 
+    global _last_power_high_time, _last_energy_change_time
+
     if _latest_energy is None:
         _LOGGER.warning(
             "Session-Start (%s) ohne gültigen Energie-Zählerstand — Sensor '%s' "
@@ -303,6 +305,14 @@ async def _start_session_for(rfid_hex: str, source: str):
     if session_id:
         _LOGGER.info("Ladevorgang gestartet (%s): Session #%s, Start-Zähler=%.3f kWh",
                      source, session_id, start_energy)
+        # Idle-Zeitstempel auf JETZT zurücksetzen — sonst würde der
+        # idle_energy_guard (power_threshold/energy_delta) eine frisch
+        # gestartete Session sofort wieder beenden, falls Leistung/Zähler
+        # vor dem Tag-Event schon länger als end_idle_minutes inaktiv war
+        # (z.B. normale Stille zwischen Tag-Auth und tatsächlichem Ladestart).
+        now = time.time()
+        _last_power_high_time = now
+        _last_energy_change_time = now
     return session_id
 
 

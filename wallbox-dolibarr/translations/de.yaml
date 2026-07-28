@@ -1,0 +1,161 @@
+configuration:
+  log_level:
+    name: "Log-Level"
+    description: >-
+      Protokoll-Detailgrad. DEBUG nur zur Fehlersuche verwenden (sehr
+      gesprächig) — im Normalbetrieb INFO oder WARNING.
+
+  wallboxes:
+    name: "Wallboxen (Anzeige)"
+    description: >-
+      Nur Anzeige/Label-Liste für die Web-UI — hat KEINEN Einfluss auf die
+      Sensor-Zuordnung. Die tatsächliche Wallbox wird über sensor_rfid /
+      sensor_energy / sensor_state (bzw. das Custom-Profil) konfiguriert.
+
+  wallbox_id:
+    name: "Wallbox-ID"
+    description: >-
+      Label, das in der Spesenabrechnungs-Zeile in Dolibarr mit angezeigt
+      wird (z.B. "alfen_eve", "garage", "carport").
+
+  rfid_whitelist:
+    name: "RFID-Whitelist"
+    description: >-
+      Liste erlaubter RFID-Tag-IDs (Hex-Strings, z.B. "A1B2C3D4"). Alle
+      anderen Tags werden ignoriert. Bei auth_mode "none" wirkungslos.
+
+  wallbox_profile:
+    name: "Wallbox-Profil"
+    description: >-
+      "alfen_eve" = bewährtes Standardverhalten, empfohlen für Alfen Eve —
+      auth_mode/state_mode/Keywords sind dabei fest verdrahtet und die
+      Felder darunter (auth_mode, state_mode, power_sensor, end_keywords,
+      usw.) werden IGNORIERT, nur die drei Sensor-Felder bleiben wirksam.
+      "custom" = alle Felder darunter (auth_mode, state_mode und deren
+      Zusatzoptionen) werden aktiv und frei kombinierbar — für andere
+      Wallbox-Hersteller, einen vorgeschalteten Zähler (z.B. Shelly EM)
+      oder Wallboxen ganz ohne eigenen Zähler. Ausführliche Beispiele:
+      siehe README des Addons.
+
+  sensor_rfid:
+    name: "RFID-Sensor (Entity-ID)"
+    description: >-
+      HA-Entity, die den zuletzt gelesenen RFID-Tag liefert (z.B.
+      "sensor.alfen_eve_tag_socket_1"). Bei auth_mode "none" LEER lassen.
+
+  sensor_energy:
+    name: "Energiezähler-Sensor (Entity-ID)"
+    description: >-
+      HA-Entity mit dem KUMULATIVEN Energiezähler in kWh (muss monoton
+      steigen — niemals eine "Session-kWh" oder Leistungswert eintragen).
+      Kann der Wallbox-eigene Zähler sein oder ein vorgeschalteter Zähler
+      wie ein Shelly EM.
+
+  sensor_state:
+    name: "Wallbox-Status-Sensor (Entity-ID)"
+    description: >-
+      HA-Entity mit dem Wallbox-Statustext (z.B. "Charging Power On",
+      "Available", "Finishing"). Nur relevant bei state_mode
+      "state_keywords". Bei anderen state_mode-Werten oder wenn die
+      Wallbox keinen Status liefert: leer lassen.
+
+  auth_mode:
+    name: "Autorisierungs-Modus (nur bei wallbox_profile: custom)"
+    description: >-
+      Bestimmt, wie ein Ladevorgang FREIGEGEBEN wird. "tag_hold" = Tag
+      liegt an, solange geladen wird (klassisches Verhalten). "tag_pulse"
+      = Tag-Event nur kurz sichtbar (z.B. Wallbox setzt selbst nach ein
+      paar Sekunden zurück), das ENDE kommt dann komplett aus state_mode.
+      "tag_toggle" = 1. autorisierter Tap startet, 2. Tap beendet SOFORT —
+      unabhängig von state_mode (für einfache RFID-Leser+Relais ohne
+      "Auto steckt"-Signal). "none" = keine Autorisierung nötig, der Start
+      kommt rein aus state_mode (reines Zähler-Logging ohne Zugriffsschutz
+      — sensor_rfid dann leer lassen).
+
+  state_mode:
+    name: "Zustand-Erkennung (nur bei wallbox_profile: custom)"
+    description: >-
+      Bestimmt, wie ERKANNT wird ob/wann geladen wird bzw. die Ladung
+      endet. "state_keywords" = Substring-Match gegen sensor_state
+      (braucht end_keywords/pause_keywords, leer = Alfen-Standard).
+      "power_threshold" = Ableitung aus einem Leistungssensor — braucht
+      power_sensor + power_threshold_w + end_idle_minutes (für Setups
+      ohne Wallbox-Status, z.B. vorgeschalteter Shelly EM).
+      "energy_delta" = Ende wird erkannt wenn sensor_energy end_idle_minutes
+      lang stillsteht — für Wallboxen ganz ohne Status- oder Leistungssignal.
+      "external_boolean" = eine on/off-Entity (active_entity) bestimmt
+      Start/Ende direkt, z.B. eine selbst gebaute HA-Template-Entity, die
+      Leistung/Hysterese/eigene Pause-Logik kombiniert. Nur EIN Modus ist
+      je aktiv — die zugehörigen Felder darunter sind nur für den
+      gewählten Modus relevant, die übrigen werden ignoriert.
+
+  power_sensor:
+    name: "Leistungssensor (nur bei state_mode: power_threshold)"
+    description: >-
+      HA-Entity mit der aktuellen Ladeleistung in Watt (z.B.
+      "sensor.shelly_em_power"). Bei anderen state_mode-Werten leer lassen.
+
+  power_threshold_w:
+    name: "Leistungsschwelle in Watt (nur bei state_mode: power_threshold)"
+    description: >-
+      Ab dieser Leistung (Watt) gilt "es wird geladen". Typisch 100-200 W,
+      je nach Wallbox/Fahrzeug-Standby-Verbrauch etwas höher wählen, um
+      Fehlauslösungen zu vermeiden.
+
+  end_idle_minutes:
+    name: "Idle-Minuten bis Sessionende (state_mode: power_threshold / energy_delta)"
+    description: >-
+      Wie viele Minuten Leistung unter der Schwelle bzw. Zählerstand
+      unverändert sein muss, bis die Session als beendet gilt. Großzügig
+      wählen (z.B. 5-15 Minuten), damit normale Lastmanagement-Pausen die
+      Session nicht fälschlich beenden.
+
+  active_entity:
+    name: "Aktiv-Entity (nur bei state_mode: external_boolean)"
+    description: >-
+      On/off-Entity (binary_sensor oder input_boolean), die den
+      Ladezustand direkt vorgibt: "on" = Session läuft (inkl. Pausen),
+      "off" = Session beendet. Kann eine selbst gebaute HA-Template-Entity
+      sein, die z.B. Leistung + eigene Hysterese/Pause-Logik kombiniert.
+
+  end_keywords:
+    name: "Ende-Keywords (nur bei state_mode: state_keywords)"
+    description: >-
+      Substrings (klein geschrieben), die im Wallbox-Status auf ein
+      ECHTES Ende hinweisen (Fahrzeug weg/Fehler), z.B. "available",
+      "finishing", "faulted". Leer lassen = bewährte Alfen-Standardliste.
+
+  pause_keywords:
+    name: "Pause-Keywords (nur bei state_mode: state_keywords)"
+    description: >-
+      Substrings (klein geschrieben), die auf eine PAUSE hinweisen
+      (Fahrzeug bleibt angesteckt, Lastmanagement drosselt kurz) — Session
+      bleibt dabei offen. Leer lassen = bewährte Alfen-Standardliste.
+
+  ha_token:
+    name: "HA Long-Lived Token (nur falls SUPERVISOR_TOKEN fehlt)"
+    description: >-
+      Normalerweise LEER lassen — der Supervisor-Token wird automatisch
+      verwendet. Nur nötig als Fallback, falls das Addon nicht über den
+      Supervisor authentifizieren kann.
+
+  min_session_kwh:
+    name: "Mindest-kWh pro Session"
+    description: >-
+      Sessions unterhalb dieses Werts (kWh) gelten als "Karte gehalten
+      ohne echte Ladung" und werden verworfen (discarded), nicht an
+      Dolibarr übertragen. Default 0.05.
+
+  max_session_hours:
+    name: "Sicherung: Max. Session-Dauer (Stunden)"
+    description: >-
+      Falls das reguläre Ende-Signal ausbleibt (Sensor-/Websocket-
+      Aussetzer), wird eine hängende Session nach dieser Zeit zwangsweise
+      beendet. Großzügig wählen, damit normale Lastmanagement-Pausen
+      nicht betroffen sind (Default 24h).
+
+  api:
+    name: "Dolibarr-API-Konfiguration"
+    description: >-
+      Verbindungsdaten zum Dolibarr-ERP für die automatische Übertragung
+      abgeschlossener Sessions in die Spesenabrechnung.

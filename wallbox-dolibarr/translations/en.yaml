@@ -1,0 +1,160 @@
+configuration:
+  log_level:
+    name: "Log level"
+    description: >-
+      Log verbosity. Use DEBUG only for troubleshooting (very chatty) —
+      INFO or WARNING for normal operation.
+
+  wallboxes:
+    name: "Wallboxes (display only)"
+    description: >-
+      Display/label list for the web UI only — has NO effect on sensor
+      mapping. The actual wallbox is configured via sensor_rfid /
+      sensor_energy / sensor_state (or the custom profile).
+
+  wallbox_id:
+    name: "Wallbox ID"
+    description: >-
+      Label shown on the expense report line in Dolibarr (e.g.
+      "alfen_eve", "garage", "carport").
+
+  rfid_whitelist:
+    name: "RFID whitelist"
+    description: >-
+      List of allowed RFID tag IDs (hex strings, e.g. "A1B2C3D4"). All
+      other tags are ignored. Has no effect when auth_mode is "none".
+
+  wallbox_profile:
+    name: "Wallbox profile"
+    description: >-
+      "alfen_eve" = proven default behaviour, recommended for Alfen Eve —
+      auth_mode/state_mode/keywords are hardcoded and the fields below
+      (auth_mode, state_mode, power_sensor, end_keywords, etc.) are
+      IGNORED; only the three sensor fields still apply. "custom" =
+      every field below (auth_mode, state_mode and their extra options)
+      becomes active and freely combinable — for other wallbox brands, an
+      upstream meter (e.g. Shelly EM), or wallboxes without their own
+      meter. See the addon README for detailed examples.
+
+  sensor_rfid:
+    name: "RFID sensor (entity ID)"
+    description: >-
+      HA entity providing the last-read RFID tag (e.g.
+      "sensor.alfen_eve_tag_socket_1"). Leave EMPTY when auth_mode is "none".
+
+  sensor_energy:
+    name: "Energy meter sensor (entity ID)"
+    description: >-
+      HA entity with the CUMULATIVE energy counter in kWh (must be
+      monotonically increasing — never a per-session kWh or power value).
+      Can be the wallbox's own meter or an upstream meter such as a
+      Shelly EM.
+
+  sensor_state:
+    name: "Wallbox status sensor (entity ID)"
+    description: >-
+      HA entity with the wallbox status text (e.g. "Charging Power On",
+      "Available", "Finishing"). Only relevant for state_mode
+      "state_keywords". Leave empty for other state_mode values or if the
+      wallbox reports no status.
+
+  auth_mode:
+    name: "Authorization mode (only with wallbox_profile: custom)"
+    description: >-
+      Controls how a charging session gets AUTHORIZED. "tag_hold" = tag
+      stays present while charging (classic behaviour). "tag_pulse" = tag
+      event is only briefly visible (e.g. the wallbox resets it itself
+      after a few seconds); the END then comes entirely from state_mode.
+      "tag_toggle" = 1st authorized tap starts, 2nd tap ends IMMEDIATELY —
+      independent of state_mode (for simple RFID reader + relay setups
+      without a "car plugged in" signal). "none" = no authorization
+      required, start comes purely from state_mode (pure meter logging
+      without access control — leave sensor_rfid empty in this case).
+
+  state_mode:
+    name: "State detection (only with wallbox_profile: custom)"
+    description: >-
+      Controls how charging start/end is DETECTED. "state_keywords" =
+      substring match against sensor_state (needs end_keywords /
+      pause_keywords, empty = Alfen defaults). "power_threshold" =
+      derived from a power sensor — needs power_sensor +
+      power_threshold_w + end_idle_minutes (for setups without a wallbox
+      status, e.g. an upstream Shelly EM). "energy_delta" = end is
+      detected once sensor_energy stops moving for end_idle_minutes — for
+      wallboxes with neither a status nor a power signal.
+      "external_boolean" = an on/off entity (active_entity) drives
+      start/end directly, e.g. a self-built HA template entity combining
+      power/hysteresis/custom pause logic. Only ONE mode is active at a
+      time — the fields below only apply to the selected mode, the rest
+      are ignored.
+
+  power_sensor:
+    name: "Power sensor (only with state_mode: power_threshold)"
+    description: >-
+      HA entity with the current charging power in watts (e.g.
+      "sensor.shelly_em_power"). Leave empty for other state_mode values.
+
+  power_threshold_w:
+    name: "Power threshold in watts (only with state_mode: power_threshold)"
+    description: >-
+      Above this power (watts), charging is considered active. Typically
+      100-200 W — pick higher if your wallbox/vehicle standby draw is
+      noisy, to avoid false triggers.
+
+  end_idle_minutes:
+    name: "Idle minutes until session end (state_mode: power_threshold / energy_delta)"
+    description: >-
+      How many minutes power must stay below the threshold (or the
+      counter stay unchanged) before the session is considered finished.
+      Choose generously (e.g. 5-15 minutes) so normal load-management
+      pauses don't end the session prematurely.
+
+  active_entity:
+    name: "Active entity (only with state_mode: external_boolean)"
+    description: >-
+      On/off entity (binary_sensor or input_boolean) that directly
+      dictates the charging state: "on" = session running (including
+      pauses), "off" = session ended. Can be a self-built HA template
+      entity combining power + custom hysteresis/pause logic.
+
+  end_keywords:
+    name: "End keywords (only with state_mode: state_keywords)"
+    description: >-
+      Lowercase substrings that indicate a REAL end (vehicle gone/error)
+      in the wallbox status, e.g. "available", "finishing", "faulted".
+      Leave empty to use the proven Alfen default list.
+
+  pause_keywords:
+    name: "Pause keywords (only with state_mode: state_keywords)"
+    description: >-
+      Lowercase substrings indicating a PAUSE (vehicle stays plugged in,
+      load management briefly throttling) — the session stays open.
+      Leave empty to use the proven Alfen default list.
+
+  ha_token:
+    name: "HA long-lived token (only if SUPERVISOR_TOKEN is unavailable)"
+    description: >-
+      Normally leave EMPTY — the supervisor token is used automatically.
+      Only needed as a fallback if the addon cannot authenticate via the
+      supervisor.
+
+  min_session_kwh:
+    name: "Minimum kWh per session"
+    description: >-
+      Sessions below this value (kWh) are treated as "card tapped without
+      an actual charge" and discarded, not transmitted to Dolibarr.
+      Default 0.05.
+
+  max_session_hours:
+    name: "Safety net: max session duration (hours)"
+    description: >-
+      If the regular end signal never arrives (sensor/websocket dropout),
+      a stuck session is force-closed after this many hours. Choose
+      generously so normal load-management pauses aren't affected
+      (default 24h).
+
+  api:
+    name: "Dolibarr API configuration"
+    description: >-
+      Connection details for the Dolibarr ERP used to automatically
+      transmit completed sessions into the expense report.

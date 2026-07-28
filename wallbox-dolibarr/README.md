@@ -61,7 +61,34 @@ api:
 `wallbox_profile` schaltet zwischen zwei Betriebsarten um:
 
 - **`alfen_eve`** (Default) — das bewährte, fest verdrahtete Alfen-Verhalten. Auth-Modus und Zustand-Erkennung sind fixiert (Tag hält an, Status-Keyword-Matching); nur die Entity-IDs (`sensor_rfid`/`sensor_energy`/`sensor_state`) bleiben anpassbar, z.B. für einen zweiten Anschluss.
-- **`custom`** — Auth-Modus (`auth_mode`) und Zustand-Erkennung (`state_mode`) sind frei kombinierbar:
+- **`custom`** — Auth-Modus (`auth_mode`) und Zustand-Erkennung (`state_mode`) sind frei kombinierbar (Details unten).
+
+> **Wichtig zur Bedienung der Home-Assistant-Konfigurationsoberfläche:** Home Assistant zeigt in der Addon-Konfiguration **immer alle Felder gleichzeitig** an — es gibt kein automatisches Ein-/Ausblenden je nach gewähltem `wallbox_profile`/`auth_mode`/`state_mode`. Jedes Feld hat inzwischen einen eigenen Hilfetext direkt in der HA-Oberfläche (Tooltip/Beschreibung unter dem Feldnamen), der erklärt, bei welcher Kombination es überhaupt wirksam ist. **Felder, die zur aktuellen Auswahl nicht passen, einfach leer/auf Default lassen — sie werden dann ignoriert.**
+
+### Schritt für Schritt: Custom-Konfiguration einrichten
+
+1. **`wallbox_profile` auf `custom` stellen.** Erst dann werden `auth_mode`/`state_mode` und ihre Zusatzfelder überhaupt ausgewertet (bei `alfen_eve` werden sie ignoriert).
+2. **Eine Frage beantworten: "Wie merkt das System, WER laden darf?"** → das ist `auth_mode`, siehe Tabelle unten. Bei `none` `sensor_rfid` leer lassen.
+3. **Eine zweite Frage beantworten: "Wie merkt das System, WANN geladen wird bzw. die Ladung endet?"** → das ist `state_mode`, siehe Tabelle unten.
+4. **Nur die zu `state_mode` passenden Zusatzfelder ausfüllen:**
+   - `state_keywords` → optional `end_keywords`/`pause_keywords` (leer = bewährte Alfen-Defaults, meist ausreichend)
+   - `power_threshold` → `power_sensor` + `power_threshold_w` + `end_idle_minutes` ausfüllen
+   - `energy_delta` → `end_idle_minutes` ausfüllen (kein extra Sensor nötig, nutzt `sensor_energy`)
+   - `external_boolean` → `active_entity` ausfüllen
+5. **`sensor_energy` immer setzen** — unabhängig vom Modus, das ist der kumulative kWh-Zähler, aus dem `total_kwh = Ende − Start` berechnet wird.
+6. **Speichern → Addon neu starten.** Im Log erscheint beim Start eine Zeile `Wallbox-Profil: custom (auth_mode=..., state_mode=..., ...)` — damit lässt sich sofort prüfen, ob die gewählte Kombination korrekt angekommen ist.
+7. **Testen:** einmal einen kompletten Ladevorgang durchspielen (bzw. simulieren) und die Addon-Logs beobachten (`Ladevorgang gestartet` / `Ladevorgang beendet`).
+
+### Typische Ausgangssituationen → passende Kombination
+
+| Deine Hardware-Situation | `auth_mode` | `state_mode` |
+|---|---|---|
+| Wallbox mit eigenem Status-Sensor und Tag-Sensor (wie Alfen) | `tag_hold` oder `tag_pulse` | `state_keywords` |
+| Separater RFID-Leser (z.B. an einem Relais), Wallbox/Zähler ohne Status-Text | `tag_pulse` oder `tag_toggle` | `power_threshold` oder `external_boolean` |
+| Vorgeschalteter Zähler (Shelly EM o.ä.) statt Wallbox-eigenem Zähler | beliebig | `power_threshold` (wenn Leistung verfügbar) sonst `energy_delta` |
+| Wallbox ganz ohne eigenen Zähler und ohne Statusausgabe | `tag_hold`/`tag_pulse`/`tag_toggle` | `energy_delta` (mit externem Zähler als `sensor_energy`) |
+| Reines Monitoring ohne Zugriffskontrolle (keine RFID-Pflicht) | `none` | `power_threshold`, `energy_delta` oder `external_boolean` |
+| Eigene, selbst gebaute HA-Logik (Template mit Hysterese/Sonderfällen) | beliebig | `external_boolean` |
 
 | `auth_mode` | Bedeutung |
 |---|---|
