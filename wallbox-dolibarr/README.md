@@ -1,15 +1,15 @@
 # ExpenseCharge — Home Assistant Addon
 
-Erfasst RFID-basierte Ladevorgänge der Alfen-Eve-Wallbox und schreibt sie direkt in die Dolibarr-Spesenabrechnung des jeweiligen Mitarbeiters.
+Erfasst RFID-basierte Ladevorgänge einer Wallbox und schreibt sie direkt in die Dolibarr-Spesenabrechnung des jeweiligen Mitarbeiters. Herstellerunabhängig konfigurierbar — von Alfen Eve bis zu generischen RFID-Leser+Zähler-Kombinationen (siehe [Wallbox-Profile](#wallbox-profile-herstellerunabhängige-konfiguration)).
 
 ## Funktionen
 
-- RFID-Erkennung über die Alfen-Eve-Sensoren (`alfen_eve_tag_socket_1`, `alfen_eve_meter_reading_socket_1`, `alfen_eve_main_state_socket_1`)
+- **Wallbox-Profile**: vorgefertigtes Alfen-Eve-Profil oder vollständig freie Konfiguration für andere Hersteller, Lastmanagement-Adapter mit vorgeschaltetem Zähler (z.B. Shelly EM) oder Wallboxen ganz ohne eigenen Zähler
 - Session-Tracking (Start, Ende, kWh) mit lokalem SQLite-Buffer
 - SHA-256-Hash für RFID — keine Klartext-Speicherung (DSGVO/Datensparsamkeit)
 - 7-Sekunden-Debounce gegen Doppellesungen
-- Robuste Status-Erkennung: substring-Match auf Alfen-Werte wie `Charging Power On`, `Available`, `Finishing`, `Faulted`
-- End-Trigger via Status **oder** RFID-„No Tag" (Karte abgezogen)
+- Robuste Status-Erkennung: substring-Match auf Wallbox-Statuswerte wie `Charging Power On`, `Available`, `Finishing`, `Faulted` (Alfen-Profil) — oder alternativ Leistungsschwelle, Zähler-Stillstand, bzw. externe Aktiv-Entity (Custom-Profil)
+- End-Trigger via Status, Leistung/Zähler-Idle, externer Entity **oder** Zweit-Tap (`tag_toggle`)
 - Automatische Übertragung an Dolibarr `receive.php` mit Token-Auth (Header `DOLAPIKEY`)
 - Web-UI (Ingress):
   - **⚡ Erfassen** — Startseite mit eingebettetem Live-Block (laufende Sessions + Wallbox-Status, flackerfreies JS-Polling alle 5 s über `/live.json`) + manuelles Erfassen
@@ -56,9 +56,53 @@ api:
 | `api.transmit_interval` | Sekunden zwischen Retry-Loops (Default 300 = 5 min) |
 | `api.timeout` | HTTP-Timeout in Sekunden für die Übertragung an Dolibarr |
 
+## Wallbox-Profile (herstellerunabhängige Konfiguration)
+
+`wallbox_profile` schaltet zwischen zwei Betriebsarten um:
+
+- **`alfen_eve`** (Default) — das bewährte, fest verdrahtete Alfen-Verhalten. Auth-Modus und Zustand-Erkennung sind fixiert (Tag hält an, Status-Keyword-Matching); nur die Entity-IDs (`sensor_rfid`/`sensor_energy`/`sensor_state`) bleiben anpassbar, z.B. für einen zweiten Anschluss.
+- **`custom`** — Auth-Modus (`auth_mode`) und Zustand-Erkennung (`state_mode`) sind frei kombinierbar:
+
+| `auth_mode` | Bedeutung |
+|---|---|
+| `tag_hold` | Tag liegt an, solange geladen wird |
+| `tag_pulse` | Tag-Event nur kurz sichtbar (z.B. Wallbox setzt selbst zurück), Ende kommt aus `state_mode` |
+| `tag_toggle` | 1. autorisierter Tap = Start, 2. Tap = Ende — unabhängig vom `state_mode` |
+| `none` | keine Autorisierungspflicht, Start kommt rein aus `state_mode` (reines Logging/Monitoring) |
+
+| `state_mode` | Bedeutung | zusätzliche Optionen |
+|---|---|---|
+| `state_keywords` | Substring-Match gegen `sensor_state` (Alfen-Standard) | `end_keywords`, `pause_keywords` (leer = Alfen-Defaults) |
+| `power_threshold` | Ableitung aus einem Leistungssensor (z.B. vorgeschalteter Shelly EM ohne eigenen Wallbox-Status) | `power_sensor`, `power_threshold_w`, `end_idle_minutes` |
+| `energy_delta` | Ende, wenn der kumulative Zähler `end_idle_minutes` lang stillsteht — für Wallboxen ganz ohne Status- oder Leistungssignal | `end_idle_minutes` |
+| `external_boolean` | eine on/off-Entity (`active_entity`) bestimmt Start/Ende direkt — z.B. eine selbst gebaute HA-Template-Entity, die Leistung, Hysterese und eigene Pause-Logik kombiniert | `active_entity` |
+
+**Beispiel — Shelly EM als vorgeschalteter Zähler + separater RFID-Leser, ohne Wallbox-Status:**
+
+```yaml
+wallbox_profile: custom
+auth_mode: tag_pulse
+sensor_rfid: sensor.nfc_reader_tag
+sensor_energy: sensor.shelly_em_total_kwh
+state_mode: power_threshold
+power_sensor: sensor.shelly_em_power
+power_threshold_w: 200
+end_idle_minutes: 10
+```
+
+**Beispiel — Tag startet nur, eine selbst gebaute Template-Entity meldet das Ende:**
+
+```yaml
+wallbox_profile: custom
+auth_mode: tag_pulse
+sensor_energy: sensor.shelly_em_total_kwh
+state_mode: external_boolean
+active_entity: binary_sensor.wallbox_charging_active
+```
+
 ## Voraussetzungen
 
-- Home Assistant Core mit Alfen-Eve-Integration (oder kompatible Wallbox die drei vergleichbare Sensoren liefert)
+- Home Assistant Core mit Alfen-Eve-Integration (Standardprofil) oder einer beliebigen anderen Wallbox/Zähler-Kombination (Custom-Profil, siehe oben)
 - Dolibarr 20+ mit installiertem `wallboxbilling`-Modul (aktuelle Version siehe Repo-Root)
 
 ## API-Endpoint (Dolibarr-Seite)

@@ -3,17 +3,19 @@
 Wallbox-Dolibarr Addon Hauptskript
 
 Verbindet sich via Websocket API mit Home Assistant Core, abonniert die
-drei Alfen-Eve-Sensoren (RFID-Tag, Zählerstand, Wallbox-Status) und
-schreibt jede abgeschlossene Lade-Session direkt in die Dolibarr-
-Spesenabrechnung des zugeordneten Mitarbeiters.
+konfigurierten Wallbox-Sensoren (RFID-Tag, Zählerstand/Leistung,
+Wallbox-Status oder externe Aktiv-Entity) und schreibt jede abgeschlossene
+Lade-Session direkt in die Dolibarr-Spesenabrechnung des zugeordneten
+Mitarbeiters.
 
-Datenfluss (Alfen Eve):
-  sensor.alfen_eve_tag_socket_1            → RFID-Karte (z.B. "A1B2C3D4" / "No Tag")
-  sensor.alfen_eve_meter_reading_socket_1  → Gesamt-Zählerstand kWh (kumulativ)
-  sensor.alfen_eve_main_state_socket_1     → Wallbox-Status ("Available",
-                                              "Charging Power On", "Finishing", …)
+Herstellerunabhängig via `wallbox_profile.py`: `wallbox_profile: "alfen_eve"`
+(Default) liefert das bewährte Alfen-Verhalten unverändert. Mit
+`wallbox_profile: "custom"` sind Autorisierung (auth_mode) und
+Zustand-Erkennung (state_mode) frei kombinierbar — u.a. für Wallboxen
+anderer Hersteller, vorgeschaltete Zähler (z.B. Shelly EM) oder Wallboxen
+ganz ohne eigenen Zähler. Details siehe wallbox_profile.py.
 
-Session-Logik:
+Session-Logik (Alfen-Standard, auth_mode='tag_hold' + state_mode='state_keywords'):
   • RFID-Wechsel auf bekannten Tag        → Session START
   • State-Wechsel auf "Available"/"Finishing"/"Stopped"/…  → Session ENDE
   • RFID-Wechsel auf "No Tag" (Karte ab)  → Session ENDE (Fallback)
@@ -36,6 +38,9 @@ from utils.hash import hash_rfid
 # Session Manager importieren
 from session_manager import SessionManager
 
+# Wallbox-Profil-Auflösung (herstellerunabhängige Auth-/Zustand-Erkennung)
+import wallbox_profile
+
 # API Client importieren (Phase 3)
 from api_client import WallboxApiClient
 
@@ -49,11 +54,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 _LOGGER = logging.getLogger(__name__)
-
-# Alfen-Sensor-Standardwerte (überschreibbar in Addon-Konfiguration)
-_DEFAULT_SENSOR_RFID   = "sensor.alfen_eve_tag_socket_1"
-_DEFAULT_SENSOR_ENERGY = "sensor.alfen_eve_meter_reading_socket_1"
-_DEFAULT_SENSOR_STATE  = "sensor.alfen_eve_main_state_socket_1"
 
 # RFID-Werte die als "keine Karte" interpretiert werden
 _RFID_NONE_VALUES = {'', 'no tag', 'no_tag', 'none', 'unknown', 'unavailable'}
@@ -80,6 +80,19 @@ _latest_rfid = None  # str oder None
 # während der Event-Schleife (das würde Frames stehlen, siehe websocket).
 _latest_energy = None  # float oder None wenn (noch) kein gültiger Wert vorliegt
 
+# Aufgelöstes Wallbox-Profil (Auth-/Zustand-Modus, Sensoren, Schwellenwerte) —
+# wird einmal beim Start aus current_config berechnet (siehe wallbox_profile.py).
+profile: Optional[wallbox_profile.WallboxProfile] = None
+
+# Für state_mode='power_threshold': wann zuletzt Leistung > Schwelle gemessen wurde.
+_last_power_high_time = None  # float (time.time()) oder None
+
+# Für state_mode='energy_delta': wann sich der Zählerstand zuletzt geändert hat.
+_last_energy_change_time = None  # float (time.time()) oder None
+
+# Platzhalter-Identität für auth_mode='none' (keine Autorisierungspflicht).
+_NO_AUTH_RFID = "NO_AUTH_REQUIRED"
+
 
 def _parse_energy(value):
     """Sensor-Wert → float kWh oder None bei 'unavailable'/'unknown'/Müll."""
@@ -93,10 +106,10 @@ def _parse_energy(value):
     except (ValueError, TypeError):
         return None
 
-# Wallbox-Status: substring-Match (case-insensitive) gegen den echten Sensor-Wert.
-# Alfen-Wallbox-States: "Available", "Preparing", "Charging Power On",
-# "Charging Stopped", "Charging Power Off", "Suspended EV", "Suspended EVSE",
-# "Finishing", "Reserved", "Unavailable", "Faulted".
+# Wallbox-Status: substring-Match (case-insensitive) gegen den echten Sensor-Wert,
+# nur relevant für state_mode='state_keywords' (Alfen-Standard: "Available",
+# "Preparing", "Charging Power On", "Charging Stopped", "Charging Power Off",
+# "Suspended EV", "Suspended EVSE", "Finishing", "Reserved", "Unavailable", "Faulted").
 #
 # WICHTIG (Lastmanagement): Wir unterscheiden ZWEI Arten von "lädt gerade nicht":
 #   - ENDE  = Fahrzeug abgesteckt / Sitzung abgeschlossen / Fehler → Session beenden
@@ -104,40 +117,9 @@ def _parse_energy(value):
 #             auf 0, EV pausiert, kurz gestoppt) → Session OFFEN halten, damit der
 #             gesamte Ladevorgang über die Pause hinweg als EINE Session erfasst
 #             wird (kumulativer Zähler liefert die korrekte Gesamt-kWh).
-# Prüf-Vorrang: ENDE > PAUSE > CHARGING.
-_END_KEYWORDS = [
-    'available', 'finishing', 'finished', 'terminating', 'disconnect',
-    'unavailable', 'faulted', 'reserved', 'error',
-]
-_PAUSE_KEYWORDS = [
-    'suspend', 'stopped', 'power off', 'paused', 'preparing',
-]
-
-def _is_end_state(s):
-    """True nur bei ECHTEM Ende: Fahrzeug weg, abgeschlossen oder Fehler."""
-    if not s:
-        return False
-    sl = s.lower()
-    return any(k in sl for k in _END_KEYWORDS)
-
-def _is_pause_state(s):
-    """True bei angesteckter, aber pausierter Ladung (Lastmanagement/EV-Pause).
-    Beendet die Session NICHT."""
-    if not s:
-        return False
-    if _is_end_state(s):
-        return False
-    sl = s.lower()
-    return any(k in sl for k in _PAUSE_KEYWORDS)
-
-def _is_charging_state(s):
-    """True wenn die Wallbox aktiv lädt (Energie fließt). ENDE- und PAUSE-
-    Zustände haben Vorrang ('Charging Stopped' zählt z.B. als Pause)."""
-    if not s:
-        return False
-    if _is_end_state(s) or _is_pause_state(s):
-        return False
-    return 'charging' in s.lower()
+# Prüf-Vorrang: ENDE > PAUSE > CHARGING. Keyword-Listen und die Zuordnung zu
+# anderen Erkennungsmodi (power_threshold/energy_delta/external_boolean) kommen
+# jetzt aus dem aufgelösten WallboxProfile (siehe wallbox_profile.py).
 
 # Globale Variablen für Session-Tracking
 session_manager = None
@@ -309,7 +291,7 @@ async def _start_session_for(rfid_hex: str, source: str):
             "Session-Start (%s) ohne gültigen Energie-Zählerstand — Sensor '%s' "
             "lieferte noch keinen Wert. Session wird gestartet, aber Start-Zähler=0; "
             "Ende markiert sie ggf. als unvollständig.",
-            source, current_config.get('sensor_energy', _DEFAULT_SENSOR_ENERGY)
+            source, profile.sensor_energy
         )
     start_energy = _latest_energy if _latest_energy is not None else 0.0
 
@@ -342,6 +324,43 @@ async def _end_active_session(reason: str):
     return completed
 
 
+async def _try_start_from_signal(source: str):
+    """Startet eine Session ausgehend von einem Charging-Signal (State-Keyword,
+    Leistungsschwelle, Energie-Delta oder externe Aktiv-Entity — alles außer
+    dem direkten RFID-Event). Löst die Autorisierung je nach auth_mode auf:
+
+      - auth_mode == 'none': startet ohne RFID-Prüfung (reines Logging/Monitoring).
+      - sonst: übliche Frisch-Event → anliegender Tag → persistierte
+        Autorisierung-Kette (überlebt Neustart und beliebig lange
+        Lastmanagement-Verzögerung zwischen Tag-Auth und Ladebeginn)."""
+    global _pending_auth
+
+    if profile.auth_mode == 'none':
+        await _start_session_for(_NO_AUTH_RFID, source)
+        return
+
+    whitelist = current_config.get('rfid_whitelist', [])
+    auth_hex = None
+    auth_src = None
+    if _pending_auth and (time.time() - _pending_auth['time']) < _PENDING_AUTH_WINDOW:
+        auth_hex, auth_src = _pending_auth['rfid_hex'], 'frisches Auth-Event'
+    elif _latest_rfid and _latest_rfid.lower() not in _RFID_NONE_VALUES \
+            and session_manager.is_rfid_authorized(_latest_rfid, whitelist):
+        auth_hex, auth_src = _latest_rfid, 'anliegender Tag'
+    else:
+        persisted = session_manager.get_pending_auth()
+        if persisted and session_manager.is_rfid_authorized(persisted, whitelist):
+            auth_hex, auth_src = persisted, 'persistierte Autorisierung (Lastmanagement-Verzögerung)'
+
+    if auth_hex:
+        _LOGGER.info("Session-Start via %s — Tag-Quelle: %s.", source, auth_src)
+        await _start_session_for(auth_hex, source)
+        _pending_auth = None
+    else:
+        _LOGGER.warning("Charging-Signal (%s) aber KEINE Autorisierung bekannt "
+                        "(weder Event noch persistiert). Session wird NICHT erfasst.", source)
+
+
 async def sensor_callback(entity_id: str, state: Dict[str, Any]):
     """
     Callback für Sensor-Updates mit Session-Tracking.
@@ -358,11 +377,12 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
       angepassten Alfen-Integration nach ~2 s automatisch auf "No Tag" zurück
       und ist damit der Ruhezustand, kein Abbruch-Signal.
     """
-    global session_manager, current_config, ha_ws, api_state, _latest_energy, _latest_rfid
+    global session_manager, current_config, ha_ws, api_state
+    global _latest_energy, _latest_rfid, _last_power_high_time, _last_energy_change_time, _pending_auth
 
-    sensor_rfid   = current_config.get('sensor_rfid',   _DEFAULT_SENSOR_RFID)
-    sensor_energy = current_config.get('sensor_energy', _DEFAULT_SENSOR_ENERGY)
-    sensor_state  = current_config.get('sensor_state',  _DEFAULT_SENSOR_STATE)
+    sensor_rfid   = profile.sensor_rfid
+    sensor_energy = profile.sensor_energy
+    sensor_state  = profile.sensor_state
 
     state_value = state.get('state')
 
@@ -370,25 +390,82 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
     if entity_id == sensor_energy:
         parsed = _parse_energy(state_value)
         if parsed is not None:
+            prev_energy = _latest_energy
+            energy_changed = (prev_energy is None) or (parsed != prev_energy)
             _latest_energy = parsed            # Cache für Session-Start/-Ende
             if api_state is not None:
                 api_state['current_energy'] = parsed
                 api_state['last_update'] = datetime.now().isoformat(timespec='seconds')
-    elif entity_id == sensor_state:
+
+            if energy_changed:
+                _last_energy_change_time = time.time()
+                # state_mode='energy_delta': steigt der Zähler und läuft noch
+                # keine Session → Ladebeginn wurde erkannt, Session starten.
+                if profile.state_mode == 'energy_delta' and prev_energy is not None \
+                        and parsed > prev_energy and not session_manager.get_active_session():
+                    await _try_start_from_signal(f'energy_delta=+{parsed - prev_energy:.3f}kWh')
+
+            active = session_manager.get_active_session()
+            if active:
+                delta = parsed - float(active.get('start_energy_kwh') or 0.0)
+                _LOGGER.debug("Aktive Session #%s: Zähler=%.3f kWh, Geladen=%.3f kWh",
+                              active['id'], parsed, delta)
+        return
+
+    if entity_id == sensor_state:
         if api_state is not None:
             api_state['wallbox_state'] = state_value
             api_state['last_update'] = datetime.now().isoformat(timespec='seconds')
 
-    # ----- RFID-Sensor (Session-Start / Karte abgezogen) --------------------
-    if entity_id == sensor_rfid:
-        global _pending_auth
+    # ----- externe Aktiv-Entity (state_mode='external_boolean') -------------
+    # Ersetzt die Status-Keyword-Erkennung komplett: on = Session läuft
+    # (inkl. Lastmanagement-Pausen), off = Session vorbei. Der Nutzer kann
+    # sich diese Entity selbst per HA-Template bauen (z.B. aus Leistung +
+    # eigener Hysterese/Pause-Logik) — das Addon muss dann nichts mehr über
+    # Schwellenwerte wissen.
+    if profile.state_mode == 'external_boolean' and profile.active_entity \
+            and entity_id == profile.active_entity:
+        sv_low = str(state_value or '').strip().lower()
+        active = session_manager.get_active_session()
+        if sv_low in ('on', 'true', '1'):
+            if not active:
+                await _try_start_from_signal('external_boolean=on')
+        elif sv_low in ('off', 'false', '0'):
+            if active:
+                await _end_active_session('external_boolean=off')
+            _pending_auth = None
+            session_manager.clear_pending_auth()
+        return
+
+    # ----- Leistungssensor (state_mode='power_threshold') -------------------
+    # Kein Status-Sensor vorhanden → Ladezustand wird aus einem Leistungswert
+    # abgeleitet. Ende erkennt der idle_energy_guard-Hintergrundtask (siehe
+    # main()), sobald die Leistung end_idle_minutes lang unter der Schwelle war.
+    if profile.state_mode == 'power_threshold' and profile.power_sensor \
+            and entity_id == profile.power_sensor:
+        power_val = _parse_energy(state_value)
+        if power_val is None:
+            return
+        active = session_manager.get_active_session()
+        if power_val >= profile.power_threshold_w:
+            _last_power_high_time = time.time()
+            if not active:
+                await _try_start_from_signal(f'power_threshold={power_val:.0f}W')
+        elif active:
+            _LOGGER.debug("Leistung (%.0f W) unter Schwelle (%.0f W) — Session #%s "
+                          "bleibt offen (Idle-Timer läuft).",
+                          power_val, profile.power_threshold_w, active['id'])
+        return
+
+    # ----- RFID-Sensor (Session-Start / ggf. Session-Ende bei tag_toggle) ---
+    if entity_id == sensor_rfid and sensor_rfid:
         sv = (state_value or '').strip()
         sv_low = sv.lower()
 
         # "No Tag" / unknown: Bei Auto-Reset-Wallboxen (Alfen-Integration setzt
         # den Tag nach ~2 s selbst auf "No Tag" zurück) ist das der NORMALE
         # Ruhezustand — KEIN "Karte abgezogen". Session-Ende läuft daher
-        # ausschließlich über den Wallbox-Status (Available/Finishing/…), nicht
+        # (außer bei auth_mode='tag_toggle') über die Zustand-Erkennung, nicht
         # über "No Tag". _latest_rfid bleibt bewusst erhalten, damit ein etwas
         # später startender Ladevorgang noch dem letzten Tag zugeordnet wird.
         if sv_low in _RFID_NONE_VALUES:
@@ -406,6 +483,15 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
                             hash_rfid(sv)[:16])
             return
 
+        # tag_toggle: zweiter autorisierter Tap beendet die laufende Session
+        # sofort — unabhängig vom Zustand-Modus (z.B. Alfen ohne Status-Sensor
+        # oder generischer Leser+Relais ohne "Auto steckt"-Signal).
+        if profile.auth_mode == 'tag_toggle' and session_manager.get_active_session():
+            await _end_active_session('tag_toggle_stop')
+            _pending_auth = None
+            session_manager.clear_pending_auth()
+            return
+
         # Tag merken — in-memory (schneller Pfad) UND persistent. Persistent,
         # weil das Lastmanagement den Ladebeginn um STUNDEN verzögern kann und
         # der In-Memory-Merker einen Addon-Neustart nicht überlebt. Gültig bis
@@ -417,13 +503,14 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
         await _start_session_for(sv, 'rfid_event')
         return
 
-    # ----- Wallbox-Status-Sensor (Session-Start/Ende per State-Wechsel) -----
-    if entity_id == sensor_state:
+    # ----- Status-Sensor (state_mode='state_keywords', Session-Start/Ende) --
+    if profile.state_mode == 'state_keywords' and entity_id == sensor_state:
         active = session_manager.get_active_session()
+        category = wallbox_profile.classify_state(state_value, profile.end_keywords, profile.pause_keywords)
 
         # ENDE (Fahrzeug abgesteckt/abgeschlossen/Fehler) — beendet die Session.
         # Fahrzeug ist weg → Autorisierung (in-memory UND persistent) verfällt.
-        if _is_end_state(state_value):
+        if category == 'end':
             if active:
                 await _end_active_session(f'state={state_value}')
             _pending_auth = None
@@ -432,14 +519,14 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
 
         # PAUSE (Lastmanagement/EV): Fahrzeug bleibt angesteckt → Session OFFEN
         # halten, NICHT beenden. Bei Wiederaufnahme läuft dieselbe Session weiter.
-        if _is_pause_state(state_value):
+        if category == 'pause':
             if active:
                 _LOGGER.info("Ladung pausiert (state='%s') — Session #%s bleibt offen "
                              "(Lastmanagement/EV-Pause, wird als EIN Vorgang erfasst).",
                              state_value, active['id'])
             return
 
-        if _is_charging_state(state_value):
+        if category == 'charging':
             # Wallbox lädt jetzt aktiv. Wenn KEINE Session läuft, aber eine
             # RFID kürzlich autorisiert wurde → Session nachträglich starten.
             # Fängt RFID-Events ab die das Addon verpasst hat (z.B. während
@@ -448,43 +535,10 @@ async def sensor_callback(entity_id: str, state: Dict[str, Any]):
                 _LOGGER.debug("Wallbox lädt (state='%s'), Session #%s läuft",
                               state_value, active['id'])
                 return
-            whitelist = current_config.get('rfid_whitelist', [])
-            # Tag-Quelle in Reihenfolge der Frische: frisches In-Memory-Event →
-            # anliegender Tag → PERSISTIERTE Autorisierung (überlebt Neustart
-            # und beliebig lange Lastmanagement-Verzögerung). Die Wallbox lädt
-            # nie ohne Tag, also ist die letzte Autorisierung die richtige.
-            auth_hex = None
-            auth_src = None
-            if _pending_auth and (time.time() - _pending_auth['time']) < _PENDING_AUTH_WINDOW:
-                auth_hex, auth_src = _pending_auth['rfid_hex'], 'frisches Auth-Event'
-            elif _latest_rfid and _latest_rfid.lower() not in _RFID_NONE_VALUES \
-                    and session_manager.is_rfid_authorized(_latest_rfid, whitelist):
-                auth_hex, auth_src = _latest_rfid, 'anliegender Tag'
-            else:
-                persisted = session_manager.get_pending_auth()
-                if persisted and session_manager.is_rfid_authorized(persisted, whitelist):
-                    auth_hex, auth_src = persisted, 'persistierte Autorisierung (Lastmanagement-Verzögerung)'
-
-            if auth_hex:
-                _LOGGER.info("Session-Start via charging-state — Tag-Quelle: %s.", auth_src)
-                await _start_session_for(auth_hex, f'charging_state={state_value}')
-                _pending_auth = None
-            else:
-                _LOGGER.warning("Wallbox lädt (state='%s') aber KEINE Autorisierung "
-                                "bekannt (weder Event noch persistiert). Session wird "
-                                "NICHT erfasst.", state_value)
+            await _try_start_from_signal(f'charging_state={state_value}')
             return
 
         _LOGGER.debug("Wallbox-State Zwischenzustand: '%s'", state_value)
-        return
-
-    # ----- Energie-Sensor: Cache schon oben gepflegt; hier nur Debug-Log -----
-    if entity_id == sensor_energy:
-        active = session_manager.get_active_session()
-        if active and _latest_energy is not None:
-            delta = _latest_energy - float(active.get('start_energy_kwh') or 0.0)
-            _LOGGER.debug("Aktive Session #%s: Zähler=%.3f kWh, Geladen=%.3f kWh",
-                          active['id'], _latest_energy, delta)
         return
 
 
@@ -504,16 +558,17 @@ async def check_startup_session():
 
     # 2) EINMALIGER Snapshot ALLER States (vor dem subscribe-Loop, konkurrenzfrei).
     #    Seedet den Energie-Cache und prüft ob gerade geladen wird.
-    sensor_rfid   = current_config.get('sensor_rfid',   _DEFAULT_SENSOR_RFID)
-    sensor_state  = current_config.get('sensor_state',  _DEFAULT_SENSOR_STATE)
-    sensor_energy = current_config.get('sensor_energy', _DEFAULT_SENSOR_ENERGY)
+    global _last_power_high_time, _last_energy_change_time
+    sensor_rfid   = profile.sensor_rfid
+    sensor_state  = profile.sensor_state
+    sensor_energy = profile.sensor_energy
     try:
         snapshot = await ha_ws.get_all_states()
     except Exception as exc:
         _LOGGER.warning("Konnte Wallbox-Zustand beim Start nicht lesen: %s", exc)
         return
 
-    rfid_val   = (snapshot.get(sensor_rfid)  or {}).get('state', '') or ''
+    rfid_val   = (snapshot.get(sensor_rfid)  or {}).get('state', '') or '' if sensor_rfid else ''
     state_val  = (snapshot.get(sensor_state) or {}).get('state', '') or ''
     energy_raw = (snapshot.get(sensor_energy) or {}).get('state')
 
@@ -525,37 +580,38 @@ async def check_startup_session():
     seeded = _parse_energy(energy_raw)
     if seeded is not None:
         _latest_energy = seeded
+        _last_energy_change_time = time.time()
         if api_state is not None:
             api_state['current_energy'] = seeded
             api_state['last_update'] = datetime.now().isoformat(timespec='seconds')
     _LOGGER.info("Wallbox-Zustand beim Start: state='%s', rfid='%s', zaehler=%s kWh",
                  state_val, rfid_val, ('%.3f' % seeded) if seeded is not None else 'n/a')
 
-    # Wenn gerade geladen wird → Session starten. Tag-Quelle: anliegender Tag,
-    # sonst PERSISTIERTE Autorisierung (überlebt Neustart; die Wallbox lädt nie
-    # ohne Tag, also gehört die laufende Ladung zur letzten Autorisierung).
-    if _is_charging_state(state_val):
-        whitelist = current_config.get('rfid_whitelist', [])
-        startup_hex = None
-        if rfid_val and rfid_val.lower() not in _RFID_NONE_VALUES \
-           and session_manager.is_rfid_authorized(rfid_val, whitelist):
-            startup_hex = rfid_val
-        else:
-            persisted = session_manager.get_pending_auth()
-            if persisted and session_manager.is_rfid_authorized(persisted, whitelist):
-                startup_hex = persisted
-        if startup_hex:
-            _LOGGER.warning(
-                "Wallbox lädt bereits beim Addon-Start (state=%s) — starte Session "
-                "mit %s. Bereits geladene kWh vor diesem Start sind für DIESE "
-                "Session verloren, ab jetzt wird erfasst.",
-                state_val, "aktuellem Tag" if startup_hex == rfid_val else "persistierter Autorisierung")
-            await _start_session_for(startup_hex, 'startup_charging_detected')
-        else:
-            _LOGGER.warning(
-                "Wallbox lädt (state=%s) aber keine bekannte Autorisierung "
-                "(rfid=%s, keine persistierte). Diese Ladung wird NICHT erfasst.",
-                state_val, rfid_val)
+    # Bereits laufende Ladung je nach state_mode erkennen. Tag-Quelle beim
+    # nachträglichen Start: anliegender Tag (gerade oben gecacht), sonst
+    # PERSISTIERTE Autorisierung (überlebt Neustart) — via _try_start_from_signal.
+    already_charging = False
+    if profile.state_mode == 'state_keywords':
+        already_charging = wallbox_profile.classify_state(
+            state_val, profile.end_keywords, profile.pause_keywords) == 'charging'
+    elif profile.state_mode == 'power_threshold' and profile.power_sensor:
+        power_val = _parse_energy((snapshot.get(profile.power_sensor) or {}).get('state'))
+        if power_val is not None and power_val >= profile.power_threshold_w:
+            already_charging = True
+            _last_power_high_time = time.time()
+    elif profile.state_mode == 'external_boolean' and profile.active_entity:
+        active_val = str((snapshot.get(profile.active_entity) or {}).get('state', '')).strip().lower()
+        already_charging = active_val in ('on', 'true', '1')
+    # state_mode='energy_delta': ein Einzel-Snapshot kann keine Bewegung des
+    # Zählers zeigen — Erkennung übernimmt der erste energy_sensor-Event danach.
+
+    if already_charging:
+        _LOGGER.warning(
+            "Wallbox lädt bereits beim Addon-Start (state_mode=%s) — versuche "
+            "Session nachträglich zu starten. Bereits geladene kWh vor diesem "
+            "Start sind für DIESE Session verloren, ab jetzt wird erfasst.",
+            profile.state_mode)
+        await _try_start_from_signal('startup_charging_detected')
 
     # Falls gerade ein Tag anliegt, ihn als pending-auth merken (für Charging-Wechsel)
     if rfid_val and rfid_val.lower() not in _RFID_NONE_VALUES:
@@ -566,7 +622,7 @@ async def check_startup_session():
 
 async def main():
     """Hauptschleife (D-03, D-10, D-11) - erweitert für Session-Tracking und API-Transmission"""
-    global session_manager, current_config, ha_ws, api_client, api_state
+    global session_manager, current_config, ha_ws, api_client, api_state, profile
 
     _LOGGER.info("Wallbox-Dolibarr Addon startet...")
 
@@ -575,6 +631,15 @@ async def main():
 
     # Konfiguration laden (für Whitelist und API)
     current_config = load_config()
+
+    # Wallbox-Profil auflösen (Auth-/Zustand-Modus, Sensoren, Schwellenwerte).
+    # 'alfen_eve' (Default) liefert exakt das bewährte, bisherige Verhalten.
+    profile = wallbox_profile.resolve_profile(current_config)
+    _LOGGER.info(
+        "Wallbox-Profil: %s (auth_mode=%s, state_mode=%s, rfid=%s, energy=%s, state=%s)",
+        current_config.get('wallbox_profile', 'alfen_eve'), profile.auth_mode, profile.state_mode,
+        profile.sensor_rfid, profile.sensor_energy, profile.sensor_state,
+    )
 
     # API Client initialisieren — flat config (dolibarr_url auf Top-Level)
     api_client = None
@@ -689,6 +754,40 @@ async def main():
 
         asyncio.create_task(stale_session_guard())
         _LOGGER.info("Session-Wache gestartet (max_session_hours)")
+
+        # Für state_mode='power_threshold'/'energy_delta' gibt es keinen
+        # expliziten "Ende"-Event (im Gegensatz zu Status-Keywords oder der
+        # externen Aktiv-Entity) — das Ende wird erst erkannt, wenn Leistung
+        # bzw. Zählerstand end_idle_minutes lang unverändert/unter Schwelle
+        # war. Dieser Task prüft das periodisch.
+        async def idle_energy_guard():
+            while True:
+                await asyncio.sleep(30)
+                try:
+                    active = session_manager.get_active_session()
+                    if not active:
+                        continue
+                    if profile.state_mode == 'power_threshold' and _last_power_high_time is not None:
+                        idle_min = (time.time() - _last_power_high_time) / 60.0
+                        if idle_min >= profile.end_idle_minutes:
+                            _LOGGER.info(
+                                "Keine Leistung > %.0f W seit %.1f min — Session #%s wird beendet.",
+                                profile.power_threshold_w, idle_min, active["id"])
+                            await _end_active_session("power_threshold_idle")
+                    elif profile.state_mode == 'energy_delta' and _last_energy_change_time is not None:
+                        idle_min = (time.time() - _last_energy_change_time) / 60.0
+                        if idle_min >= profile.end_idle_minutes:
+                            _LOGGER.info(
+                                "Zählerstand seit %.1f min unverändert — Session #%s wird beendet.",
+                                idle_min, active["id"])
+                            await _end_active_session("energy_delta_idle")
+                except Exception as exc:  # Wache darf nie den Loop killen
+                    _LOGGER.warning("idle_energy_guard Fehler: %s", exc)
+
+        if profile.state_mode in ('power_threshold', 'energy_delta'):
+            asyncio.create_task(idle_energy_guard())
+            _LOGGER.info("Idle-Wache gestartet (state_mode=%s, end_idle_minutes=%.1f)",
+                         profile.state_mode, profile.end_idle_minutes)
 
         # Hintergrund-Task starten
         if api_client:

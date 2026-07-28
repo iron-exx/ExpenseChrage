@@ -1,6 +1,6 @@
 name: "ExpenseCharge"
 description: "ExpenseCharge — Ladevorgänge. Spesen. Abgerechnet."
-version: "1.8.2"
+version: "1.9.0"
 slug: "wallbox-dolibarr"
 init: false
 
@@ -34,10 +34,50 @@ options:
   rfid_whitelist:
     - "EFCD083E"
 
-  # HA-Sensoren der Wallbox (Alfen Eve Vorgabe — bei anderer Wallbox anpassen)
+  # ── Wallbox-Profil ─────────────────────────────────────────────────────
+  # "alfen_eve"  → bewährtes Alfen-Verhalten, Auth-/Zustand-Logik fest verdrahtet
+  # "custom"     → Auth-Modus und Zustand-Erkennung frei konfigurierbar
+  #                (andere Hersteller, vorgeschalteter Zähler wie Shelly EM,
+  #                Wallbox ganz ohne eigenen Zähler, o.ä.)
+  wallbox_profile: "alfen_eve"
+
+  # HA-Sensoren der Wallbox (Alfen Eve Vorgabe — bei anderer Wallbox/Profil anpassen)
   sensor_rfid: "sensor.alfen_eve_tag_socket_1"
   sensor_energy: "sensor.alfen_eve_meter_reading_socket_1"
   sensor_state: "sensor.alfen_eve_main_state_socket_1"
+
+  # ── Nur wirksam bei wallbox_profile: "custom" ──────────────────────────
+  # Autorisierung:
+  #   tag_hold   — Tag liegt an, solange geladen wird (Alfen-Standard)
+  #   tag_pulse  — Tag-Event nur kurz sichtbar, Ende kommt aus state_mode
+  #   tag_toggle — 1. autorisierter Tap = Start, 2. Tap = Ende
+  #   none       — keine Autorisierungspflicht, Start kommt rein aus state_mode
+  auth_mode: "tag_hold"
+
+  # Zustand-Erkennung:
+  #   state_keywords   — Substring-Match gegen sensor_state (Alfen-Standard)
+  #   power_threshold  — Ableitung aus power_sensor + power_threshold_w
+  #   energy_delta     — Ende, wenn sensor_energy end_idle_minutes lang stillsteht
+  #   external_boolean — active_entity (on/off) bestimmt Start/Ende direkt,
+  #                       z.B. eine selbst gebaute HA-Template-Entity
+  state_mode: "state_keywords"
+
+  # Nur bei state_mode: "power_threshold"
+  power_sensor: ""
+  power_threshold_w: 100
+
+  # Bei state_mode: "power_threshold" / "energy_delta" — wie lange (Minuten)
+  # Leistung unter Schwelle bzw. Zähler unverändert sein muss, bis die
+  # Session als beendet gilt (großzügig wählen wegen Lastmanagement-Pausen).
+  end_idle_minutes: 5
+
+  # Nur bei state_mode: "external_boolean"
+  active_entity: ""
+
+  # Nur bei state_mode: "state_keywords" und wallbox_profile: "custom" —
+  # leer lassen übernimmt die bewährten Alfen-Keywords.
+  end_keywords: []
+  pause_keywords: []
 
   # Nur nötig, falls SUPERVISOR_TOKEN nicht verfügbar ist (Normalfall: leer lassen)
   ha_token: ""
@@ -66,9 +106,20 @@ schema:
   wallbox_id: "str"
   rfid_whitelist:
     - "str"
+  wallbox_profile: "list(alfen_eve|custom)"
   sensor_rfid: "str"
   sensor_energy: "str"
   sensor_state: "str"
+  auth_mode: "list(tag_hold|tag_pulse|tag_toggle|none)"
+  state_mode: "list(state_keywords|power_threshold|energy_delta|external_boolean)"
+  power_sensor: "str"
+  power_threshold_w: "float"
+  end_idle_minutes: "float"
+  active_entity: "str"
+  end_keywords:
+    - "str"
+  pause_keywords:
+    - "str"
   ha_token: "password"
   min_session_kwh: "float"
   max_session_hours: "float"

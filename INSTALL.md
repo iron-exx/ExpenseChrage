@@ -89,6 +89,12 @@ Die Authentifizierung läuft über ein **einzelnes gemeinsames Token** (Shared S
    > **Wichtig:** Die drei Sensoren müssen wirklich existieren — prüfen mit
    > *Entwicklerwerkzeuge → Zustände → Filter „alfen_eve"*. Bei abweichenden
    > Wallboxen die entsprechenden Sensoren eintragen.
+   >
+   > Für Nicht-Alfen-Wallboxen, einen vorgeschalteten Zähler (z.B. Shelly EM) oder
+   > Wallboxen ganz ohne eigenen Zähler: `wallbox_profile: custom` setzen und
+   > Auth-Modus (`auth_mode`) + Zustand-Erkennung (`state_mode`) frei kombinieren —
+   > Details und Beispiele in
+   > [wallbox-dolibarr/README.md](wallbox-dolibarr/README.md#wallbox-profile-herstellerunabhängige-konfiguration).
 
 3. **Speichern → Starten**.
 4. Logs prüfen: muss zeigen `Dolibarr API Verbindung erfolgreich`.

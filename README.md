@@ -95,6 +95,11 @@ Jede Ladung landet sofort als Position im Spesenreport des Mitarbeiters. Pro Mon
      transmit_interval: 300
    ```
 
+   > Das obige Beispiel nutzt das Default-Profil `wallbox_profile: alfen_eve`. Für andere
+   > Hersteller, einen vorgeschalteten Zähler (z.B. Shelly EM) oder Wallboxen ganz ohne
+   > eigenen Zähler gibt es `wallbox_profile: custom` mit frei kombinierbarem Auth-Modus
+   > und Zustand-Erkennung — siehe [wallbox-dolibarr/README.md](wallbox-dolibarr/README.md#wallbox-profile-herstellerunabhängige-konfiguration).
+
 ### 3. Addon-Web-UI
 
 Zwei Tabs im Ingress:
