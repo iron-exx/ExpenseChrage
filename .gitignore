@@ -28,6 +28,7 @@ Thumbs.db
 
 # Secrets — NIE committen
 github_token.txt
+github_token_*.txt
 *.token
 
 # Referenzmaterial (nicht unser Code)
